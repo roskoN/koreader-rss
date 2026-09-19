@@ -37,10 +37,10 @@ commands below) or `./scripts/kindle-logs.sh`.
 ## 1. KOReader plugin menu navigation
 
 The plugin registers a single main-menu entry (per `_meta.lua`), named
-**News integration probe** (`sorting_hint = "more_tools"`). Restart KOReader
+**RSS Reader**. Restart KOReader
 after any deploy; the menu is not visible until then.
 
-**Path:** Main menu → *News integration probe* → sub-items:
+**Path:** Main menu → *RSS Reader* → sub-items:
 
 1. Unread
 2. Feeds
@@ -143,7 +143,7 @@ policy (§H): `max_width`, `max_height = 2×`, `max_pixels = 2×` (never upscale
 
 | Check | Path | Expected | Evidence |
 |---|---|---|---|
-| Initialize SQLite | Main → News integration probe → Initialize and query SQLite | probe results shown | §3 |
+| Initialize SQLite | Main → RSS Reader → Initialize and query SQLite | probe results shown | §3 |
 | Feeds list | → Feeds | parses `feed list` tab-separated | |
 | Add feed | → Add feed | prompts URL, runs `feed add URL` | |
 | Remove feed | hold a feed row | confirm, runs `feed remove ID` | |
