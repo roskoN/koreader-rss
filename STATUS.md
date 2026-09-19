@@ -26,12 +26,13 @@
 - **VERIFIED on 2026-09-19:** `make deploy-plugin KOREADER_DIR=/mnt/us/koreader` installed the current two-file plugin atomically-by-file; local and remote SHA-256 hashes match. KOReader must be restarted before runtime menu probes can execute.
 - **VERIFIED on 2026-09-19:** `make deploy-backend KOREADER_DIR=/mnt/us/koreader` installed the current ARM backend; local and remote SHA-256 hashes match. A disposable `/var/tmp` device fixture database was initialized, materialized, probed, and removed successfully (`schema_version=1`, `journal_mode=delete`, one article/cache file).
 - **VERIFIED on 2026-09-19:** hardened backend and plugin were redeployed after refresh-lock, Retry-After, feed enable/disable, physical-size, and sanitization changes; the ARM backend hash matches the local release artifact.
+- **VERIFIED on 2026-09-19:** Readability/ammonia ARM backend redeployed; local and Kindle SHA-256 hashes match (`ea3af1956c431621bd8a24f487e2bf1b76d5b0b735933628374dcf7cddac13b1`).
 - Hardware KOReader SQLite/data-URI rendering, filesystem locking/journal interruption behavior, and wake/suspend behavior remain unverified.
 - Refresh-all now processes due feeds fairly from the persisted cursor; physical SQLite behavior and backoff timing still need real-device measurement.
 
 ## Current task
 
-Continue Milestones 4–7 in bounded slices: persisted scheduler state, validator-coherent refresh runs, cache/database size bounds, and complete feed-management UI. Validate on host and QEMU before any Kindle claims.
+Complete final automated hardening and then run the deployed KOReader/device validation checklist.
 
 ## Unresolved / evidence status
 
@@ -41,4 +42,4 @@ Continue Milestones 4–7 in bounded slices: persisted scheduler state, validato
 
 ## Next task
 
-Perform device-only KOReader feed UI/cache artifact and SQLite locking/journal experiments before any new Kindle claims.
+Run `docs/MANUAL-VALIDATION.md` after restarting KOReader; remaining implementation follow-ups are selector configuration, kill-boundary tests, corpus benchmarks, and wake integration measurements.
