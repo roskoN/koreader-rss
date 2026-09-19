@@ -34,6 +34,15 @@ function RSSReader:init()
     self.probe_database = self.data_dir .. "/probe.sqlite3"
     self.fixture = self.cache_dir .. "/integration-probe.html"
     self.ui.menu:registerToMainMenu(self)
+    self:importOpmlFeeds()
+end
+
+function RSSReader:importOpmlFeeds()
+    self:runBackend({ self.backend, "--db", self.database, "feed", "import-opml", self.path .. "/feeds" },
+        _("Importing OPML feeds…"), function(output)
+            local imported = tonumber(output:match("imported=(%d+)") or "0") or 0
+            if imported > 0 then show(string.format(_("Imported %d feeds."), imported)) end
+        end)
 end
 
 function RSSReader:showUnread()

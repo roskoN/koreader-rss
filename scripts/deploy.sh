@@ -38,6 +38,13 @@ case "$mode" in
             scp "$file" "$host:$remote_plugin/$name.new"
             ssh "$host" "mv '$remote_plugin/$name.new' '$remote_plugin/$name'"
         done
+        ssh "$host" "mkdir -p '$remote_plugin/feeds'"
+        for file in koreader-plugin/feeds/*.opml; do
+            test -f "$file" || continue
+            name=$(basename "$file")
+            scp "$file" "$host:$remote_plugin/feeds/$name.new"
+            ssh "$host" "mv '$remote_plugin/feeds/$name.new' '$remote_plugin/feeds/$name'"
+        done
         ;;
     *)
         echo "usage: $0 all|backend|plugin" >&2

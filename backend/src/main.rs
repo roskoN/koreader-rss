@@ -92,6 +92,62 @@ fn machine_field(value: &str) -> String {
     value.replace(['\t', '\r', '\n'], " ")
 }
 
+fn opml_urls(xml: &str) -> Vec<String> {
+    let lower = xml.to_ascii_lowercase();
+    let mut urls = Vec::new();
+    let mut cursor = 0;
+    while let Some(relative) = lower[cursor..].find("<outline") {
+        let start = cursor + relative;
+        let Some(end_relative) = lower[start..].find('>') else {
+            break;
+        };
+        let tag = &xml[start..start + end_relative + 1];
+        let tag_lower = tag.to_ascii_lowercase();
+        if let Some(attr) = tag_lower.find("xmlurl=") {
+            let value_start = attr + 7;
+            let quote = tag_lower
+                .as_bytes()
+                .get(value_start)
+                .copied()
+                .unwrap_or(b' ');
+            if quote == b'"' || quote == b'\'' {
+                let content_start = value_start + 1;
+                if let Some(end) = tag_lower[content_start..].find(quote as char) {
+                    let url = tag[content_start..content_start + end].trim();
+                    if !url.is_empty() && !urls.iter().any(|known| known == url) {
+                        urls.push(url.to_owned());
+                    }
+                }
+            }
+        }
+        cursor = start + end_relative + 1;
+    }
+    urls
+}
+
+fn import_opml_dir(store: &mut store::Store, directory: &std::path::Path) -> Result<usize, Error> {
+    let mut imported = 0;
+    for entry in std::fs::read_dir(directory)? {
+        let path = entry?.path();
+        if path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.eq_ignore_ascii_case("opml"))
+            != Some(true)
+        {
+            continue;
+        }
+        let xml = std::fs::read_to_string(path)?;
+        for url in opml_urls(&xml) {
+            if url.starts_with("https://") || url.starts_with("http://") {
+                store.add_feed(&url, unix_now())?;
+                imported += 1;
+            }
+        }
+    }
+    Ok(imported)
+}
+
 fn run(arguments: &[String]) -> Result<(), Error> {
     if arguments.first().map(String::as_str) == Some("--db") {
         let db = path_argument(&arguments[..2], "--db")?;
@@ -130,6 +186,15 @@ fn run(arguments: &[String]) -> Result<(), Error> {
                     "ok\tentries={}\ttitle={}",
                     parsed.entries.len(),
                     machine_field(parsed.title.as_deref().unwrap_or(""))
+                );
+            }
+            Some("feed")
+                if arguments.get(3).map(String::as_str) == Some("import-opml")
+                    && arguments.len() == 5 =>
+            {
+                println!(
+                    "imported={}",
+                    import_opml_dir(&mut store, std::path::Path::new(&arguments[4]))?
                 );
             }
             Some("feed")
@@ -409,6 +474,21 @@ mod tests {
         .expect("enable feed");
         run(&["--db".into(), db_arg.clone(), "init-fixture-db".into()]).expect("fixture database");
         run(&["--db".into(), db_arg.clone(), "status".into()]).expect("status");
+        let opml_dir = directory.path().join("feeds");
+        std::fs::create_dir(&opml_dir).expect("opml directory");
+        std::fs::write(
+            opml_dir.join("subscriptions.opml"),
+            r#"<opml><body><outline text="Example" xmlUrl="https://example.org/feed.xml" /></body></opml>"#,
+        )
+        .expect("opml");
+        run(&[
+            "--db".into(),
+            db_arg.clone(),
+            "feed".into(),
+            "import-opml".into(),
+            opml_dir.display().to_string(),
+        ])
+        .expect("import opml");
         run(&[
             "--db".into(),
             db_arg.clone(),
