@@ -137,13 +137,14 @@ fn import_opml_dir(store: &mut store::Store, directory: &std::path::Path) -> Res
         {
             continue;
         }
-        let xml = std::fs::read_to_string(path)?;
+        let xml = std::fs::read_to_string(&path)?;
         for url in opml_urls(&xml) {
             if url.starts_with("https://") || url.starts_with("http://") {
                 store.add_feed(&url, unix_now())?;
                 imported += 1;
             }
         }
+        std::fs::remove_file(path)?;
     }
     Ok(imported)
 }
@@ -489,6 +490,7 @@ mod tests {
             opml_dir.display().to_string(),
         ])
         .expect("import opml");
+        assert!(!opml_dir.join("subscriptions.opml").exists());
         run(&[
             "--db".into(),
             db_arg.clone(),
