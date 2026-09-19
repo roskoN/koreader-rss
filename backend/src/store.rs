@@ -332,6 +332,13 @@ impl Store {
             == 1)
     }
 
+    pub fn set_feed_enabled(&mut self, id: i64, enabled: bool) -> Result<bool, Error> {
+        Ok(self.connection.execute(
+            "UPDATE feeds SET enabled=?2 WHERE id=?1",
+            params![id, i64::from(enabled)],
+        )? == 1)
+    }
+
     fn map_feed(row: &rusqlite::Row<'_>) -> rusqlite::Result<FeedRow> {
         Ok(FeedRow {
             id: row.get(0)?,
@@ -416,6 +423,10 @@ impl Store {
         self.connection.execute(
             "UPDATE refresh_runs SET finished_at=?2,outcome=?3,last_error=?4 WHERE id=?1",
             params![id, now, outcome, error],
+        )?;
+        self.connection.execute(
+            "DELETE FROM refresh_runs WHERE id NOT IN (SELECT id FROM refresh_runs ORDER BY started_at DESC,id DESC LIMIT 20)",
+            [],
         )?;
         Ok(())
     }
@@ -579,7 +590,28 @@ impl Store {
         }
         tx.commit()?;
         self.maintain_freelist()?;
+        self.enforce_physical_limit(max_db_bytes)?;
         Ok(removed)
+    }
+
+    fn enforce_physical_limit(&mut self, limit: i64) -> Result<(), Error> {
+        if limit <= 0 {
+            return Ok(());
+        }
+        for _ in 0..128 {
+            if self.database_bytes()? <= limit {
+                break;
+            }
+            let removed = self.connection.execute(
+                "DELETE FROM articles WHERE id IN (SELECT id FROM articles WHERE is_read=1 ORDER BY sort_at,id LIMIT 50)",
+                [],
+            )?;
+            if removed == 0 {
+                break;
+            }
+            self.maintain_freelist()?;
+        }
+        Ok(())
     }
 
     fn maintain_freelist(&mut self) -> Result<(), Error> {
@@ -637,6 +669,16 @@ impl Store {
         error: &str,
         now: i64,
     ) -> Result<(), Error> {
+        self.update_feed_failure_with_retry(feed_id, error, now, None)
+    }
+
+    pub fn update_feed_failure_with_retry(
+        &mut self,
+        feed_id: i64,
+        error: &str,
+        now: i64,
+        retry_after_s: Option<i64>,
+    ) -> Result<(), Error> {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -645,7 +687,9 @@ impl Store {
             params![feed_id],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
-        let delay = backoff_delay(&source_url, failures);
+        let delay = retry_after_s
+            .unwrap_or_else(|| backoff_delay(&source_url, failures))
+            .clamp(0, 48 * 60 * 60);
         tx.execute(
             "UPDATE feeds SET last_attempt_at=?2,last_checked_at=?2,failure_count=?4,last_error=?3,backoff_until=?2+?5,next_due_at=?2+?5 WHERE id=?1",
             params![feed_id, now, error, failures, delay],

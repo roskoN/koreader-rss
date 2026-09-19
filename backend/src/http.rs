@@ -86,7 +86,20 @@ impl HttpClient {
             });
         }
         if !(200..300).contains(&status) {
-            return Err(Error::message(format!("feed returned HTTP {status}")));
+            let retry_after_s = response
+                .headers()
+                .get("retry-after")
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.trim().parse::<i64>().ok())
+                .map(|seconds| seconds.clamp(0, 48 * 60 * 60));
+            return Err(Error::Http {
+                message: format!("feed returned HTTP {status}"),
+                retry_after_s: if matches!(status, 429 | 503) {
+                    retry_after_s
+                } else {
+                    None
+                },
+            });
         }
 
         let bytes = response

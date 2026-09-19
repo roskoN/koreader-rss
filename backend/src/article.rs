@@ -81,6 +81,21 @@ fn sanitize_fragment(input: &str) -> String {
             output.replace_range(start..end.min(output.len()), "");
         }
     }
+    for attribute in [
+        "onclick=",
+        "onload=",
+        "onerror=",
+        "onmouseover=",
+        "onfocus=",
+        "onanimationstart=",
+    ] {
+        output = output.replace(&format!(" {attribute}"), " data-removed=");
+        output = output.replace(
+            &format!(" {}", attribute.to_ascii_uppercase()),
+            " data-removed=",
+        );
+    }
+    output = output.replace("javascript:", "").replace("JAVASCRIPT:", "");
     output
 }
 
@@ -291,6 +306,26 @@ mod tests {
         assert!(html.contains("<p>Hello</p>"));
         assert!(html.contains("A &lt;title&gt;"));
         assert!(!compress(&html).expect("compress").is_empty());
+    }
+
+    #[test]
+    fn sanitizes_event_handlers_and_javascript_urls() {
+        let entry = ParsedEntry {
+            id: "id".into(),
+            url: None,
+            title: Some("Title".into()),
+            authors: vec![],
+            published_at: None,
+            updated_at: None,
+            content: Some(
+                r#"<p onclick="alert(1)"><a href="javascript:alert(2)">link</a></p>"#.into(),
+            ),
+            summary: None,
+            dedupe_key: "g:id".into(),
+        };
+        let html = wrap(&entry).expect("wrap");
+        assert!(!html.contains("onclick="));
+        assert!(!html.contains("javascript:"));
     }
 
     #[test]

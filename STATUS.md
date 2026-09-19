@@ -14,7 +14,8 @@
 - Materialization purges stale temporary files and enforces a disposable cache bound of 3 HTML files/32 MiB, retaining the requested article; refresh pruning now reads retention/article/size limits from SQLite settings and applies per-feed, total, and logical compressed-byte caps. Added `feed list` plus KOReader feed list/add/remove actions.
 - Feed failures now use stable feed-derived jitter with bounded 15-minute/1-hour/4-hour/12-hour/24-hour backoff; pruning performs capped incremental freelist vacuum and exposes physical database byte measurement.
 - Added headless `init-fixture-db` and `device-probe --cache DIR` commands, expanded CLI/retention tests, expanded ARM smoke coverage, and `docs/MANUAL-VALIDATION.md` for the remaining physical checks.
-- Validation passed: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (31 tests), `luajit -b koreader-plugin/main.lua /tmp/rssreader-main.luac`, `make test-arm` (cross-build plus QEMU doctor/SQLite/materialization/fixture/probe smoke), and `git diff --check`.
+- Added disposable refresh overlap locks, bounded `Retry-After` handling for HTTP 429/503 responses, refresh-run pruning to the newest 20 rows, feed enable/disable CLI/UI controls, physical database-size maintenance, and additional HTML event-handler/JavaScript URL sanitization tests.
+- Validation passed: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (33 tests), `luajit -b koreader-plugin/main.lua /tmp/rssreader-main.luac`, `make test-arm` (cross-build plus QEMU doctor/SQLite/materialization/fixture/probe smoke), and `git diff --check`.
 
 ## Important discoveries
 

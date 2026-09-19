@@ -1,5 +1,6 @@
 //! Bounded synchronous feed refresh vertical slice.
 
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::article;
@@ -13,6 +14,58 @@ fn now() -> i64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64
+}
+
+fn retry_after(error: &Error) -> Option<i64> {
+    match error {
+        Error::Http { retry_after_s, .. } => *retry_after_s,
+        _ => None,
+    }
+}
+
+pub struct RefreshLock {
+    path: PathBuf,
+}
+
+impl RefreshLock {
+    pub fn acquire(database: &Path) -> Result<Self, Error> {
+        let path = database.with_extension("refresh.lock");
+        let stamp = now();
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(file) => {
+                use std::io::Write;
+                let mut file = file;
+                writeln!(file, "{} {}", std::process::id(), stamp)?;
+                Ok(Self { path })
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let stale = std::fs::read_to_string(&path)
+                    .ok()
+                    .and_then(|text| {
+                        text.split_whitespace()
+                            .nth(1)
+                            .and_then(|value| value.parse::<i64>().ok())
+                    })
+                    .is_some_and(|started| stamp.saturating_sub(started) > 900);
+                if stale {
+                    std::fs::remove_file(&path)?;
+                    return Self::acquire(database);
+                }
+                Err(Error::message("another refresh is already running"))
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+}
+
+impl Drop for RefreshLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
 }
 
 pub fn run(store: &mut Store, feed_id: i64, budget_s: u64) -> Result<(usize, usize), Error> {
@@ -53,7 +106,12 @@ fn run_one(store: &mut Store, feed_id: i64, budget_s: u64) -> Result<(usize, usi
     let response = match response {
         Ok(response) => response,
         Err(error) => {
-            store.update_feed_failure(feed.id, &error.to_string(), fetched_at)?;
+            store.update_feed_failure_with_retry(
+                feed.id,
+                &error.to_string(),
+                fetched_at,
+                retry_after(&error),
+            )?;
             return Err(error);
         }
     };
@@ -232,7 +290,7 @@ fn extract_body(html: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::extract_body;
+    use super::{extract_body, RefreshLock};
 
     #[test]
     fn extracts_article_or_body_without_network() {
@@ -244,5 +302,15 @@ mod tests {
             extract_body("<html><body>story</body></html>"),
             "<body>story</body>"
         );
+    }
+
+    #[test]
+    fn refresh_lock_rejects_overlap_and_cleans_up() {
+        let directory = tempfile::tempdir().expect("directory");
+        let database = directory.path().join("rss.sqlite3");
+        let lock = RefreshLock::acquire(&database).expect("lock");
+        assert!(RefreshLock::acquire(&database).is_err());
+        drop(lock);
+        assert!(RefreshLock::acquire(&database).is_ok());
     }
 }

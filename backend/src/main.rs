@@ -18,6 +18,10 @@ pub enum Error {
     Io(std::io::Error),
     Sqlite(rusqlite::Error),
     Image(image::ImageError),
+    Http {
+        message: String,
+        retry_after_s: Option<i64>,
+    },
     Message(String),
 }
 
@@ -33,6 +37,7 @@ impl fmt::Display for Error {
             Self::Io(error) => error.fmt(formatter),
             Self::Sqlite(error) => error.fmt(formatter),
             Self::Image(error) => error.fmt(formatter),
+            Self::Http { message, .. } => formatter.write_str(message),
             Self::Message(message) => formatter.write_str(message),
         }
     }
@@ -57,7 +62,7 @@ impl From<image::ImageError> for Error {
 }
 
 fn usage() -> &'static str {
-    "usage:\n  rss-backend --version\n  rss-backend doctor\n  rss-backend http-probe --url HTTPS_URL\n  rss-backend init-probe-db --db PATH\n  rss-backend materialize-fixture --out PATH\n  rss-backend --db PATH feed add URL\n  rss-backend --db PATH feed list\n  rss-backend --db PATH feed remove ID\n  rss-backend --db PATH init-fixture-db\n  rss-backend --db PATH device-probe --cache DIR\n  rss-backend --db PATH refresh [--feed ID] [--budget SEC]\n  rss-backend --db PATH materialize ID --cache DIR\n  rss-backend --db PATH mark ID read|unread"
+    "usage:\n  rss-backend --version\n  rss-backend doctor\n  rss-backend http-probe --url HTTPS_URL\n  rss-backend init-probe-db --db PATH\n  rss-backend materialize-fixture --out PATH\n  rss-backend --db PATH feed add URL\n  rss-backend --db PATH feed list\n  rss-backend --db PATH feed enable ID\n  rss-backend --db PATH feed disable ID\n  rss-backend --db PATH feed remove ID\n  rss-backend --db PATH init-fixture-db\n  rss-backend --db PATH device-probe --cache DIR\n  rss-backend --db PATH refresh [--feed ID] [--budget SEC]\n  rss-backend --db PATH materialize ID --cache DIR\n  rss-backend --db PATH mark ID read|unread"
 }
 
 fn value_argument(arguments: &[String], flag: &str) -> Result<String, Error> {
@@ -119,6 +124,20 @@ fn run(arguments: &[String]) -> Result<(), Error> {
                     );
                 }
             }
+            Some("feed")
+                if matches!(
+                    arguments.get(3).map(String::as_str),
+                    Some("enable" | "disable")
+                ) && arguments.len() == 5 =>
+            {
+                let id = arguments[4]
+                    .parse::<i64>()
+                    .map_err(|_| Error::message("invalid feed ID"))?;
+                let enabled = arguments[3] == "enable";
+                if !store.set_feed_enabled(id, enabled)? {
+                    return Err(Error::message("feed not found"));
+                }
+            }
             Some("init-fixture-db") if arguments.len() == 3 => {
                 let feed_id = store.add_feed("https://example.org/fixture-feed", unix_now())?;
                 let html = fixture::html(fixture::DEFAULT_TITLE)?;
@@ -154,7 +173,9 @@ fn run(arguments: &[String]) -> Result<(), Error> {
                     .flatten()
                     .filter_map(Result::ok)
                     .filter_map(|entry| entry.metadata().ok().map(|meta| (entry, meta)))
-                    .filter(|(entry, _)| entry.path().extension().and_then(|ext| ext.to_str()) == Some("html"))
+                    .filter(|(entry, _)| {
+                        entry.path().extension().and_then(|ext| ext.to_str()) == Some("html")
+                    })
                     .filter(|(_, meta)| meta.is_file())
                     .collect::<Vec<_>>();
                 let cache_bytes: u64 = cache_files.iter().map(|(_, meta)| meta.len()).sum();
@@ -169,6 +190,7 @@ fn run(arguments: &[String]) -> Result<(), Error> {
             Some("refresh") => {
                 let feed_id = integer_argument(&arguments[3..], "--feed", 0)?;
                 let budget = integer_argument(&arguments[3..], "--budget", 240)?;
+                let _lock = refresh::RefreshLock::acquire(&db)?;
                 if feed_id == 0 {
                     let _ = refresh::run_all(&mut store, budget)?;
                 } else {
@@ -292,6 +314,22 @@ mod tests {
         ])
         .expect("add feed");
         run(&["--db".into(), db_arg.clone(), "feed".into(), "list".into()]).expect("list feeds");
+        run(&[
+            "--db".into(),
+            db_arg.clone(),
+            "feed".into(),
+            "disable".into(),
+            "1".into(),
+        ])
+        .expect("disable feed");
+        run(&[
+            "--db".into(),
+            db_arg.clone(),
+            "feed".into(),
+            "enable".into(),
+            "1".into(),
+        ])
+        .expect("enable feed");
         run(&["--db".into(), db_arg.clone(), "init-fixture-db".into()]).expect("fixture database");
         run(&[
             "--db".into(),

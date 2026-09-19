@@ -105,7 +105,8 @@ function RSSReader:showFeeds()
             for line in (output .. "\n"):gmatch("([^\n]*)\n") do
                 local id, enabled, title, url = line:match("^(%d+)\t([^\t]*)\t([^\t]*)\t(.+)$")
                 if id then
-                    table.insert(items, { feed_id = tonumber(id), text = (title ~= "" and title or url), mandatory = url })
+                    local label = (title ~= "" and title or url)
+                    table.insert(items, { feed_id = tonumber(id), enabled = enabled == "enabled", text = label, mandatory = url })
                 end
             end
             if #items == 0 then show(_("No feeds configured.")); return end
@@ -113,8 +114,18 @@ function RSSReader:showFeeds()
             menu = Menu:new{
                 title = _("Feeds"), item_table = items, covers_fullscreen = true,
                 onMenuSelect = function(_, item) self:confirmRemoveFeed(item.feed_id, item.text, menu) end,
+                onMenuHold = function(_, item) self:toggleFeed(item, menu) end,
             }
             UIManager:show(menu)
+        end)
+end
+
+function RSSReader:toggleFeed(item, menu)
+    local command = item.enabled and "disable" or "enable"
+    self:runBackend({ self.backend, "--db", self.database, "feed", command, tostring(item.feed_id) },
+        item.enabled and _("Disabling feed…") or _("Enabling feed…"), function()
+            UIManager:close(menu)
+            self:showFeeds()
         end)
 end
 
