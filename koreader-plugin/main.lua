@@ -363,7 +363,6 @@ end
 function RSSReader:addToMainMenu(menu_items)
     menu_items.rss_reader_probe = {
         text = _("News integration probe"),
-        sorting_hint = "more_tools",
         sub_item_table = {
             {
                 text = _("Unread"),
