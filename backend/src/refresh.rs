@@ -157,7 +157,7 @@ fn run_one(store: &mut Store, feed_id: i64, budget_s: u64) -> Result<(usize, usi
             let mut failures = 0;
             let client = HttpClient::new();
             for entry in &parsed.entries {
-                match insert_entry(store, feed.id, entry, fetched_at, &client) {
+                match insert_entry(store, &feed, entry, fetched_at, &client) {
                     Ok(true) => inserted += 1,
                     Ok(false) => {}
                     Err(error) => {
@@ -244,7 +244,7 @@ pub fn run_all_with_reason(
 
 fn insert_entry(
     store: &mut Store,
-    feed_id: i64,
+    feed: &crate::store::FeedRow,
     entry: &ParsedEntry,
     fetched_at: i64,
     client: &HttpClient,
@@ -254,14 +254,19 @@ fn insert_entry(
     if source.content.as_deref().is_none() && source.url.is_some() {
         let (effective, page) = client.fetch_page(source.url.as_deref().unwrap())?;
         let body = String::from_utf8(page).map_err(|_| Error::message("page is not UTF-8"))?;
-        source.content = Some(article::extract_page(&body, &effective)?);
+        source.content = Some(article::extract_page_with_selectors(
+            &body,
+            &effective,
+            feed.content_selector.as_deref(),
+            feed.remove_selector.as_deref(),
+        )?);
         source_kind = 2;
     }
     let html = article::wrap(&source)?;
     let html = article::embed_images(&html, source.url.as_deref(), client);
     let blob = article::compress(&html)?;
     let changed = store.insert_article(&ArticleInsert {
-        feed_id,
+        feed_id: feed.id,
         dedupe_key: &entry.dedupe_key,
         guid: (!source.id.is_empty()).then_some(source.id.as_str()),
         url: source.url.as_deref(),
@@ -281,7 +286,7 @@ fn insert_entry(
         content_blob: &blob,
     })?;
     if changed {
-        store.clear_entry_failure(feed_id, &source.dedupe_key)?;
+        store.clear_entry_failure(feed.id, &source.dedupe_key)?;
     }
     Ok(changed)
 }

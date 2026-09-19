@@ -138,6 +138,21 @@ fn run(arguments: &[String]) -> Result<(), Error> {
                     return Err(Error::message("feed not found"));
                 }
             }
+            Some("feed")
+                if arguments.get(3).map(String::as_str) == Some("selectors")
+                    && arguments.len() == 7 =>
+            {
+                let id = arguments[4]
+                    .parse::<i64>()
+                    .map_err(|_| Error::message("invalid feed ID"))?;
+                if !store.set_feed_selectors(
+                    id,
+                    (!arguments[5].is_empty()).then_some(arguments[5].as_str()),
+                    (!arguments[6].is_empty()).then_some(arguments[6].as_str()),
+                )? {
+                    return Err(Error::message("feed not found"));
+                }
+            }
             Some("init-fixture-db") if arguments.len() == 3 => {
                 let feed_id = store.add_feed("https://example.org/fixture-feed", unix_now())?;
                 let html = fixture::html(fixture::DEFAULT_TITLE)?;

@@ -23,11 +23,23 @@ pub const STORAGE_VERSION: i64 = 1;
 const CACHE_MAX_FILES: usize = 3;
 const CACHE_MAX_BYTES: u64 = 32 * 1024 * 1024;
 
-pub fn extract_page(html: &str, document_url: &str) -> Result<String, Error> {
+pub fn extract_page_with_selectors(
+    html: &str,
+    document_url: &str,
+    content_selector: Option<&str>,
+    remove_selector: Option<&str>,
+) -> Result<String, Error> {
+    let selected = content_selector.map_or_else(
+        || html.to_owned(),
+        |selector| select_fragment(html, selector),
+    );
+    let selected = remove_selector.map_or(selected.clone(), |selector| {
+        remove_fragment(&selected, selector)
+    });
     let mut readability =
-        dom_smoothie::Readability::new(html, Some(document_url), None).map_err(|error| {
-            Error::message(format!("cannot initialize article extraction: {error}"))
-        })?;
+        dom_smoothie::Readability::new(selected.as_str(), Some(document_url), None).map_err(
+            |error| Error::message(format!("cannot initialize article extraction: {error}")),
+        )?;
     let article = readability
         .parse()
         .map_err(|error| Error::message(format!("article extraction failed: {error}")))?;
@@ -94,6 +106,50 @@ pub fn extract_page(html: &str, document_url: &str) -> Result<String, Error> {
         return Err(Error::message("article extraction produced empty content"));
     }
     Ok(cleaned)
+}
+
+fn select_fragment(html: &str, selector: &str) -> String {
+    let selector = selector.trim();
+    let token = selector.trim_start_matches(['#', '.']);
+    if token.is_empty() {
+        return html.to_owned();
+    }
+    let needle = if selector.starts_with('#') {
+        format!("id=\"{token}\"")
+    } else if selector.starts_with('.') {
+        format!("class=\"{token}\"")
+    } else {
+        format!("<{token}")
+    };
+    let lower = html.to_ascii_lowercase();
+    let Some(found) = lower.find(&needle.to_ascii_lowercase()) else {
+        return html.to_owned();
+    };
+    let start = html[..found].rfind('<').unwrap_or(found);
+    let Some(close_start) = html[start..].find('>') else {
+        return html.to_owned();
+    };
+    let open = &html[start..start + close_start + 1];
+    let name = open
+        .trim_start_matches('<')
+        .split(|character: char| character.is_whitespace() || character == '>')
+        .next()
+        .unwrap_or(token);
+    let closing = format!("</{name}>");
+    let end = lower[start + close_start + 1..]
+        .find(&closing.to_ascii_lowercase())
+        .map(|offset| start + close_start + 1 + offset + closing.len());
+    end.map(|end| html[start..end].to_owned())
+        .unwrap_or_else(|| html.to_owned())
+}
+
+fn remove_fragment(html: &str, selector: &str) -> String {
+    let fragment = select_fragment(html, selector);
+    if fragment == html {
+        html.to_owned()
+    } else {
+        html.replace(&fragment, "")
+    }
 }
 
 fn escape(value: &str) -> String {
@@ -413,11 +469,27 @@ mod tests {
             <nav class="navigation">Navigation and ads</nav><main><h1>Story</h1><p>Important text with enough words to identify the main article content clearly.</p>
             <script>alert(1)</script><a href="javascript:bad()">safe label</a></main>
         </body></html>"#;
-        let content = extract_page(page, "https://example.org/story").expect("extract");
+        let content = extract_page_with_selectors(page, "https://example.org/story", None, None)
+            .expect("extract");
         assert!(content.contains("Important text"));
         assert!(!content.contains("Navigation and ads"));
         assert!(!content.contains("<script"));
         assert!(!content.contains("javascript:"));
+    }
+
+    #[test]
+    fn configured_selectors_limit_and_remove_fragments() {
+        let page = r#"<html><body><div id="content"><p>Keep this.</p><aside>Remove this.</aside></div><footer>Outside.</footer></body></html>"#;
+        let content = extract_page_with_selectors(
+            page,
+            "https://example.org/story",
+            Some("#content"),
+            Some("aside"),
+        )
+        .expect("extract");
+        assert!(content.contains("Keep this."));
+        assert!(!content.contains("Remove this."));
+        assert!(!content.contains("Outside."));
     }
 
     #[test]

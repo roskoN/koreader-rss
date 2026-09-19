@@ -18,6 +18,7 @@
 - Webpage fallback now uses `dom_smoothie` Readability followed by an explicit `ammonia` semantic HTML allowlist; the extraction fixture covers boilerplate removal and unsafe URL/script stripping.
 - Added `make validate` crash-boundary/cache-reconstruction automation, `make validate-device` SSH fixture/locking/timing diagnostics, and `make benchmark` materialization/RSS measurement output.
 - Added backend refresh `status`, `--reason manual|wake`, article status/list support in the KOReader menu, explicit HTTP compression negotiation, and EXIF-aware image orientation before grayscale/resize.
+- Added feed content/remove selector storage and bounded selector application before Readability, plus selector fixture coverage; current ARM backend/plugin were redeployed after these changes.
 - Validation passed: `make test` (35 tests), `make validate`, `make benchmark` (100 materializations: 0.15 s, max RSS 6460 KB), LuaJIT syntax compilation, `make test-arm`, `make validate-device`, and `git diff --check`.
 - Full extraction validation passed: `cargo test --workspace` (34 tests), Clippy, and `make test-arm`; the ARM release binary is 5,086,716 bytes (about 1.30 MB larger than the prior 3,791,876-byte build due to HTML parser/sanitizer dependencies).
 
@@ -40,7 +41,7 @@ Complete final automated hardening and then run the deployed KOReader/device val
 
 - `NEEDS EXPERIMENT`: restart KOReader and use the deployed plugin's “Initialize and query SQLite”, feed UI, and offline fixture/article actions; record SQLite API results, Base64 JPEG/PNG rendering, reader viewport, journal locking, and KOReader cache artifacts.
 - `NEEDS EXPERIMENT`: wake hook, Wi-Fi readiness, suspend interaction, useful execution window, and battery impact.
-- Feed-specific content/remove selectors, per-feed article menu navigation, external-link action, full corpus benchmarking, and kill-at-each-refresh-transaction-boundary tests remain unimplemented.
+- Per-feed article menu navigation, external-link action, full corpus benchmarking, and kill-at-each-refresh-transaction-boundary tests remain unimplemented.
 
 ## Next task
 

@@ -22,6 +22,8 @@ pub struct FeedRow {
     pub http_last_modified: Option<String>,
     pub next_due_at: i64,
     pub schedule_order: i64,
+    pub content_selector: Option<String>,
+    pub remove_selector: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -295,10 +297,10 @@ impl Store {
 
     pub fn feed(&self, id: Option<i64>) -> Result<Option<FeedRow>, Error> {
         let sql = if id.is_some() {
-            "SELECT id,source_url,effective_url,title,http_etag,http_last_modified,next_due_at,schedule_order
+            "SELECT id,source_url,effective_url,title,http_etag,http_last_modified,next_due_at,schedule_order,content_selector,remove_selector
              FROM feeds WHERE id=?1 AND enabled=1"
         } else {
-            "SELECT id,source_url,effective_url,title,http_etag,http_last_modified,next_due_at,schedule_order
+            "SELECT id,source_url,effective_url,title,http_etag,http_last_modified,next_due_at,schedule_order,content_selector,remove_selector
              FROM feeds WHERE enabled=1 ORDER BY schedule_order LIMIT 1"
         };
         let mut statement = self.connection.prepare(sql)?;
@@ -349,6 +351,18 @@ impl Store {
         )? == 1)
     }
 
+    pub fn set_feed_selectors(
+        &mut self,
+        id: i64,
+        content: Option<&str>,
+        remove: Option<&str>,
+    ) -> Result<bool, Error> {
+        Ok(self.connection.execute(
+            "UPDATE feeds SET content_selector=?2,remove_selector=?3 WHERE id=?1",
+            params![id, content, remove],
+        )? == 1)
+    }
+
     fn map_feed(row: &rusqlite::Row<'_>) -> rusqlite::Result<FeedRow> {
         Ok(FeedRow {
             id: row.get(0)?,
@@ -359,6 +373,8 @@ impl Store {
             http_last_modified: row.get(5)?,
             next_due_at: row.get(6)?,
             schedule_order: row.get(7)?,
+            content_selector: row.get(8)?,
+            remove_selector: row.get(9)?,
         })
     }
 
