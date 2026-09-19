@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+members = ["backend"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+rust-version = "1.82"
+
+[profile.release]
+# Baseline from PLAN.md section I/R: optimized, single codegen unit, abort on
+# panic, stripped. `s` (size) is preferred over `z`/`3` for the musl static
+# ARM artifact until the device benchmarks justify otherwise.
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
