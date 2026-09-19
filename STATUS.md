@@ -23,6 +23,7 @@
 - **VERIFIED on 2026-09-19:** `KOREADER_DIR=/mnt/us/koreader make kindle-test` completed on Kindle firmware/kernel `4.1.15-lab126`, model `Lab126 i.MX6SLL Board`, KOReader `v2026.07.1`, with 502 MiB RAM, 1072×1448 and 1448×1072 modes, `/mnt/us` on `fuse.fsp`, and static backend/HTTPS probes passing. A standalone KOReader LuaJIT SQLite probe failed because `package.loadlib` is unavailable outside the KOReader runtime; this does not establish plugin API failure.
 - **VERIFIED on 2026-09-19:** `make deploy-plugin KOREADER_DIR=/mnt/us/koreader` installed the current two-file plugin atomically-by-file; local and remote SHA-256 hashes match. KOReader must be restarted before runtime menu probes can execute.
 - **VERIFIED on 2026-09-19:** `make deploy-backend KOREADER_DIR=/mnt/us/koreader` installed the current ARM backend; local and remote SHA-256 hashes match. A disposable `/var/tmp` device fixture database was initialized, materialized, probed, and removed successfully (`schema_version=1`, `journal_mode=delete`, one article/cache file).
+- **VERIFIED on 2026-09-19:** hardened backend and plugin were redeployed after refresh-lock, Retry-After, feed enable/disable, physical-size, and sanitization changes; the ARM backend hash matches the local release artifact.
 - Hardware KOReader SQLite/data-URI rendering, filesystem locking/journal interruption behavior, and wake/suspend behavior remain unverified.
 - Refresh-all now processes due feeds fairly from the persisted cursor; physical SQLite behavior and backoff timing still need real-device measurement.
 
