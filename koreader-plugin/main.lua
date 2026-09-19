@@ -164,10 +164,11 @@ function RSSReader:showFeeds()
         _("Loading feeds…"), function(output)
             local items = {}
             for line in (output .. "\n"):gmatch("([^\n]*)\n") do
-                local id, enabled, title, url = line:match("^(%d+)\t([^\t]*)\t([^\t]*)\t(.+)$")
+                local id, enabled, title, url, failures, last_error = line:match("^(%d+)\t([^\t]*)\t([^\t]*)\t([^\t]*)\t(%d+)\t(.*)$")
                 if id then
                     local is_enabled = enabled == "enabled"
                     local label = (title ~= "" and title or url)
+                    if tonumber(failures) > 0 and last_error ~= "" then label = label .. " [!] " .. last_error end
                     table.insert(items, { feed_id = tonumber(id), enabled = is_enabled, text = (is_enabled and "[on] " or "[off] ") .. label, mandatory = url })
                 end
             end
@@ -231,8 +232,11 @@ function RSSReader:addFeedDialog()
             return
         end
         UIManager:close(dialog)
-        self:runBackend({ self.backend, "--db", self.database, "feed", "add", url },
-            _("Adding feed…"), function() show(_("Feed added.")) end)
+        self:runBackend({ self.backend, "--db", self.database, "feed", "check", url },
+            _("Checking feed…"), function()
+                self:runBackend({ self.backend, "--db", self.database, "feed", "add", url },
+                    _("Adding feed…"), function() show(_("Feed added.")) end)
+            end)
     end
     dialog = InputDialog:new{
         title = _("Add feed URL"), input = "https://",

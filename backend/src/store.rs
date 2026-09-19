@@ -32,6 +32,8 @@ pub struct FeedSummary {
     pub source_url: String,
     pub title: Option<String>,
     pub enabled: bool,
+    pub failure_count: i64,
+    pub last_error: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -330,13 +332,15 @@ impl Store {
     pub fn list_feeds(&self) -> Result<Vec<FeedSummary>, Error> {
         let mut statement = self
             .connection
-            .prepare("SELECT id,source_url,title,enabled FROM feeds ORDER BY schedule_order")?;
+            .prepare("SELECT id,source_url,title,enabled,failure_count,last_error FROM feeds ORDER BY schedule_order")?;
         let rows = statement.query_map([], |row| {
             Ok(FeedSummary {
                 id: row.get(0)?,
                 source_url: row.get(1)?,
                 title: row.get(2)?,
                 enabled: row.get::<_, i64>(3)? != 0,
+                failure_count: row.get(4)?,
+                last_error: row.get(5)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)

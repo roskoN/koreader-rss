@@ -105,6 +105,34 @@ fn run(arguments: &[String]) -> Result<(), Error> {
                 println!("{id}");
             }
             Some("feed")
+                if arguments.get(3).map(String::as_str) == Some("check")
+                    && arguments.len() == 5 =>
+            {
+                let url = &arguments[4];
+                if !(url.starts_with("https://") || url.starts_with("http://")) {
+                    return Err(Error::message("feed URL must use http:// or https://"));
+                }
+                let response = http::HttpClient::new().fetch_feed(http::FeedRequest {
+                    url,
+                    etag: None,
+                    last_modified: None,
+                })?;
+                let bytes = match response {
+                    http::FeedResponse::Body { bytes, .. } => bytes,
+                    http::FeedResponse::NotModified { .. } => {
+                        return Err(Error::message(
+                            "feed returned not-modified without validators",
+                        ))
+                    }
+                };
+                let parsed = feed::parse_feed(&bytes)?;
+                println!(
+                    "ok\tentries={}\ttitle={}",
+                    parsed.entries.len(),
+                    machine_field(parsed.title.as_deref().unwrap_or(""))
+                );
+            }
+            Some("feed")
                 if arguments.get(3).map(String::as_str) == Some("remove")
                     && arguments.len() == 5 =>
             {
@@ -120,11 +148,13 @@ fn run(arguments: &[String]) -> Result<(), Error> {
             {
                 for feed in store.list_feeds()? {
                     println!(
-                        "{}\t{}\t{}\t{}",
+                        "{}\t{}\t{}\t{}\t{}\t{}",
                         feed.id,
                         if feed.enabled { "enabled" } else { "disabled" },
                         machine_field(feed.title.as_deref().unwrap_or("")),
-                        machine_field(&feed.source_url)
+                        machine_field(&feed.source_url),
+                        feed.failure_count,
+                        machine_field(feed.last_error.as_deref().unwrap_or(""))
                     );
                 }
             }
