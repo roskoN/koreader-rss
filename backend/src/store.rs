@@ -32,6 +32,16 @@ pub struct FeedSummary {
     pub enabled: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct RefreshRunSummary {
+    pub id: i64,
+    pub started_at: i64,
+    pub finished_at: i64,
+    pub feeds_checked: i64,
+    pub new_articles: i64,
+    pub last_error: Option<String>,
+}
+
 #[derive(Debug)]
 pub struct ArticleInsert<'a> {
     pub feed_id: i64,
@@ -640,6 +650,20 @@ impl Store {
         Ok(self
             .connection
             .query_row("PRAGMA freelist_count", [], |row| row.get(0))?)
+    }
+
+    pub fn latest_refresh_run(&self) -> Result<Option<RefreshRunSummary>, Error> {
+        self.connection
+            .query_row(
+                "SELECT id,started_at,COALESCE(finished_at,0),feeds_checked,new_articles,last_error FROM refresh_runs ORDER BY started_at DESC,id DESC LIMIT 1",
+                [],
+                |row| Ok(RefreshRunSummary {
+                    id: row.get(0)?, started_at: row.get(1)?, finished_at: row.get(2)?,
+                    feeds_checked: row.get(3)?, new_articles: row.get(4)?, last_error: row.get(5)?,
+                }),
+            )
+            .optional()
+            .map_err(Error::from)
     }
 
     pub fn list_articles(

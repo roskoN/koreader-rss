@@ -62,7 +62,10 @@ impl HttpClient {
             return Err(Error::message("feed URL must use http:// or https://"));
         }
 
-        let mut builder = self.agent.get(request.url);
+        let mut builder = self
+            .agent
+            .get(request.url)
+            .header("Accept-Encoding", "gzip");
         if let Some(etag) = request.etag {
             builder = builder.header("If-None-Match", etag);
         }

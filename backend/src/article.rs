@@ -1,7 +1,7 @@
 //! Minimal embedded-content article representation for the first feed slice.
 
 use std::collections::HashSet;
-use std::io::{Read, Write};
+use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -9,7 +9,8 @@ use flate2::{write::ZlibEncoder, Compression};
 use image::{
     codecs::{jpeg::JpegEncoder, png::PngEncoder},
     imageops::FilterType,
-    DynamicImage, GenericImageView, ImageEncoder,
+    metadata::Orientation,
+    DynamicImage, GenericImageView, ImageDecoder, ImageEncoder, ImageReader,
 };
 use url::Url;
 
@@ -240,7 +241,11 @@ pub fn embed_images(
 }
 
 fn encode_image(bytes: &[u8]) -> Result<String, Error> {
-    let image = image::load_from_memory(bytes)?;
+    let reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
+    let mut decoder = reader.into_decoder()?;
+    let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
+    let mut image = DynamicImage::from_decoder(decoder)?;
+    image.apply_orientation(orientation);
     let image = limit_image(image);
     let gray = image.to_luma8();
     let mut encoded = Vec::new();

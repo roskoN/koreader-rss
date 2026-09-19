@@ -68,9 +68,14 @@ impl Drop for RefreshLock {
     }
 }
 
-pub fn run(store: &mut Store, feed_id: i64, budget_s: u64) -> Result<(usize, usize), Error> {
+pub fn run_with_reason(
+    store: &mut Store,
+    feed_id: i64,
+    budget_s: u64,
+    reason: i64,
+) -> Result<(usize, usize), Error> {
     let started_at = now();
-    let run_id = store.begin_refresh_run(crate::store::RUN_REASON_MANUAL, budget_s, started_at)?;
+    let run_id = store.begin_refresh_run(reason, budget_s, started_at)?;
     let result = run_one(store, feed_id, budget_s);
     let (inserted, failures) = match &result {
         Ok(counts) => *counts,
@@ -189,8 +194,12 @@ fn run_one(store: &mut Store, feed_id: i64, budget_s: u64) -> Result<(usize, usi
     }
 }
 
-pub fn run_all(store: &mut Store, budget_s: u64) -> Result<(usize, usize), Error> {
-    let run_id = store.begin_refresh_run(crate::store::RUN_REASON_MANUAL, budget_s, now())?;
+pub fn run_all_with_reason(
+    store: &mut Store,
+    budget_s: u64,
+    reason: i64,
+) -> Result<(usize, usize), Error> {
+    let run_id = store.begin_refresh_run(reason, budget_s, now())?;
     let started = std::time::Instant::now();
     let mut inserted = 0;
     let mut failures = 0;

@@ -62,7 +62,7 @@ impl From<image::ImageError> for Error {
 }
 
 fn usage() -> &'static str {
-    "usage:\n  rss-backend --version\n  rss-backend doctor\n  rss-backend http-probe --url HTTPS_URL\n  rss-backend init-probe-db --db PATH\n  rss-backend materialize-fixture --out PATH\n  rss-backend --db PATH feed add URL\n  rss-backend --db PATH feed list\n  rss-backend --db PATH feed enable ID\n  rss-backend --db PATH feed disable ID\n  rss-backend --db PATH feed remove ID\n  rss-backend --db PATH init-fixture-db\n  rss-backend --db PATH device-probe --cache DIR\n  rss-backend --db PATH refresh [--feed ID] [--budget SEC]\n  rss-backend --db PATH materialize ID --cache DIR\n  rss-backend --db PATH mark ID read|unread"
+    "usage:\n  rss-backend --version\n  rss-backend doctor\n  rss-backend http-probe --url HTTPS_URL\n  rss-backend init-probe-db --db PATH\n  rss-backend materialize-fixture --out PATH\n  rss-backend --db PATH feed add URL\n  rss-backend --db PATH feed list\n  rss-backend --db PATH feed enable ID\n  rss-backend --db PATH feed disable ID\n  rss-backend --db PATH feed remove ID\n  rss-backend --db PATH init-fixture-db\n  rss-backend --db PATH device-probe --cache DIR\n  rss-backend --db PATH status\n  rss-backend --db PATH refresh [--feed ID] [--budget SEC] [--reason manual|wake]\n  rss-backend --db PATH materialize ID --cache DIR\n  rss-backend --db PATH mark ID read|unread"
 }
 
 fn value_argument(arguments: &[String], flag: &str) -> Result<String, Error> {
@@ -187,14 +187,34 @@ fn run(arguments: &[String]) -> Result<(), Error> {
                 println!("cache_files={}", cache_files.len());
                 println!("cache_bytes={cache_bytes}");
             }
+            Some("status") if arguments.len() == 3 => {
+                if let Some(run) = store.latest_refresh_run()? {
+                    println!("run_id={}", run.id);
+                    println!("started_at={}", run.started_at);
+                    println!("finished_at={}", run.finished_at);
+                    println!("feeds_checked={}", run.feeds_checked);
+                    println!("new_articles={}", run.new_articles);
+                    println!("last_error={}", run.last_error.unwrap_or_default());
+                } else {
+                    println!("run_id=none");
+                }
+            }
             Some("refresh") => {
                 let feed_id = integer_argument(&arguments[3..], "--feed", 0)?;
                 let budget = integer_argument(&arguments[3..], "--budget", 240)?;
+                let reason = match arguments.iter().position(|argument| argument == "--reason") {
+                    None => store::RUN_REASON_MANUAL,
+                    Some(index) => match arguments.get(index + 1).map(String::as_str) {
+                        Some("wake") => 2,
+                        Some("manual") => store::RUN_REASON_MANUAL,
+                        _ => return Err(Error::message("invalid refresh reason")),
+                    },
+                };
                 let _lock = refresh::RefreshLock::acquire(&db)?;
                 if feed_id == 0 {
-                    let _ = refresh::run_all(&mut store, budget)?;
+                    let _ = refresh::run_all_with_reason(&mut store, budget, reason)?;
                 } else {
-                    let _ = refresh::run(&mut store, feed_id as i64, budget)?;
+                    let _ = refresh::run_with_reason(&mut store, feed_id as i64, budget, reason)?;
                 }
             }
             Some("materialize")
@@ -331,6 +351,7 @@ mod tests {
         ])
         .expect("enable feed");
         run(&["--db".into(), db_arg.clone(), "init-fixture-db".into()]).expect("fixture database");
+        run(&["--db".into(), db_arg.clone(), "status".into()]).expect("status");
         run(&[
             "--db".into(),
             db_arg.clone(),

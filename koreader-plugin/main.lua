@@ -97,6 +97,48 @@ function RSSReader:markArticle(article_id, state)
         _("Updating article…"), function() self:showUnread() end)
 end
 
+function RSSReader:showAllArticles(feed_id, title)
+    local connection
+    local statement
+    local ok, result = pcall(function()
+        local SQ3 = require("lua-ljsqlite3/init")
+        connection = SQ3.open(self.database)
+        local sql = "SELECT a.id,a.title,COALESCE(f.title,f.source_url),a.sort_at FROM articles a JOIN feeds f ON f.id=a.feed_id"
+        if feed_id then sql = sql .. " WHERE a.feed_id = " .. tostring(feed_id) end
+        sql = sql .. " ORDER BY a.sort_at DESC,a.id DESC LIMIT 100"
+        statement = connection:prepare(sql)
+        local items = {}
+        while true do
+            local row = statement:step()
+            if not row then break end
+            table.insert(items, {
+                article_id = tonumber(row[1]),
+                text = tostring(row[2]),
+                mandatory = string.format("%s · %s", tostring(row[3]), os.date("%Y-%m-%d", tonumber(row[4]))),
+            })
+        end
+        return items
+    end)
+    if statement then pcall(statement.close, statement) end
+    if connection then pcall(connection.close, connection) end
+    if not ok then show(tostring(result)); return end
+    if #result == 0 then show(_("No articles.")); return end
+    local menu = Menu:new{
+        title = title or _("All articles"), item_table = result, covers_fullscreen = true,
+        onMenuSelect = function(_, item) self:openArticle(item.article_id) end,
+    }
+    UIManager:show(menu)
+end
+
+function RSSReader:showStatus()
+    self:runBackend({ self.backend, "--db", self.database, "status" }, _("Loading refresh status…"), show)
+end
+
+function RSSReader:refreshNow()
+    self:runBackend({ self.backend, "--db", self.database, "refresh", "--reason", "manual" },
+        _("Refreshing feeds…"), function() self:showStatus() end)
+end
+
 function RSSReader:showFeeds()
     self:ensureDirectories()
     self:runBackend({ self.backend, "--db", self.database, "feed", "list" },
@@ -105,8 +147,9 @@ function RSSReader:showFeeds()
             for line in (output .. "\n"):gmatch("([^\n]*)\n") do
                 local id, enabled, title, url = line:match("^(%d+)\t([^\t]*)\t([^\t]*)\t(.+)$")
                 if id then
+                    local is_enabled = enabled == "enabled"
                     local label = (title ~= "" and title or url)
-                    table.insert(items, { feed_id = tonumber(id), enabled = enabled == "enabled", text = label, mandatory = url })
+                    table.insert(items, { feed_id = tonumber(id), enabled = is_enabled, text = (is_enabled and "[on] " or "[off] ") .. label, mandatory = url })
                 end
             end
             if #items == 0 then show(_("No feeds configured.")); return end
@@ -286,6 +329,18 @@ function RSSReader:addToMainMenu(menu_items)
             {
                 text = _("Unread"),
                 callback = function() self:showUnread() end,
+            },
+            {
+                text = _("All articles"),
+                callback = function() self:showAllArticles() end,
+            },
+            {
+                text = _("Refresh now"),
+                callback = function() self:refreshNow() end,
+            },
+            {
+                text = _("Refresh status"),
+                callback = function() self:showStatus() end,
             },
             {
                 text = _("Feeds"),
