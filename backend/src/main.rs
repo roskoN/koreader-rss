@@ -210,6 +210,18 @@ fn run(arguments: &[String]) -> Result<(), Error> {
                 }
             }
             Some("feed")
+                if arguments.get(3).map(String::as_str) == Some("remove-all")
+                    && arguments.len() == 4 =>
+            {
+                println!("removed={}", store.remove_all_feeds()?);
+            }
+            Some("articles")
+                if arguments.get(3).map(String::as_str) == Some("remove-all")
+                    && arguments.len() == 4 =>
+            {
+                println!("removed={}", store.remove_all_articles()?);
+            }
+            Some("feed")
                 if arguments.get(3).map(String::as_str) == Some("list") && arguments.len() == 4 =>
             {
                 for feed in store.list_feeds()? {
@@ -499,5 +511,13 @@ mod tests {
             directory.path().display().to_string(),
         ])
         .expect("device probe");
+        run(&[
+            "--db".into(),
+            db_arg.clone(),
+            "articles".into(),
+            "remove-all".into(),
+        ])
+        .expect("remove articles");
+        run(&["--db".into(), db_arg, "feed".into(), "remove-all".into()]).expect("remove feeds");
     }
 }

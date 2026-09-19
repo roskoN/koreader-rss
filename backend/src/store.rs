@@ -353,6 +353,14 @@ impl Store {
             == 1)
     }
 
+    pub fn remove_all_feeds(&mut self) -> Result<usize, Error> {
+        Ok(self.connection.execute("DELETE FROM feeds", [])?)
+    }
+
+    pub fn remove_all_articles(&mut self) -> Result<usize, Error> {
+        Ok(self.connection.execute("DELETE FROM articles", [])?)
+    }
+
     pub fn set_feed_enabled(&mut self, id: i64, enabled: bool) -> Result<bool, Error> {
         Ok(self.connection.execute(
             "UPDATE feeds SET enabled=?2 WHERE id=?1",

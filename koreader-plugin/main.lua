@@ -232,6 +232,20 @@ function RSSReader:confirmRemoveFeed(feed_id, title, menu)
     })
 end
 
+function RSSReader:confirmPurge(kind)
+    local is_feeds = kind == "feeds"
+    UIManager:show(ConfirmBox:new{
+        text = is_feeds and _("Remove ALL feeds and their articles?") or _("Remove ALL stored articles?"),
+        ok_text = _("Remove all"),
+        ok_callback = function()
+            local command = is_feeds and { "feed", "remove-all" } or { "articles", "remove-all" }
+            self:runBackend({ self.backend, "--db", self.database, command[1], command[2] },
+                is_feeds and _("Removing all feeds…") or _("Removing all articles…"),
+                function(output) show(output:gsub("\n", " ")) end)
+        end,
+    })
+end
+
 function RSSReader:addFeedDialog()
     local dialog
     local function submit()
@@ -414,6 +428,14 @@ function RSSReader:addToMainMenu(menu_items)
             {
                 text = _("Add feed"),
                 callback = function() self:addFeedDialog() end,
+            },
+            {
+                text = _("Remove all articles"),
+                callback = function() self:confirmPurge("articles") end,
+            },
+            {
+                text = _("Remove all feeds"),
+                callback = function() self:confirmPurge("feeds") end,
             },
             {
                 text = _("Environment and paths"),
