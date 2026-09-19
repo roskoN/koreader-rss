@@ -44,7 +44,6 @@ pub fn extract_page_with_selectors(
         .parse()
         .map_err(|error| Error::message(format!("article extraction failed: {error}")))?;
     let tags = [
-        "a",
         "abbr",
         "article",
         "b",
@@ -90,7 +89,7 @@ pub fn extract_page_with_selectors(
     ]
     .into_iter()
     .collect::<HashSet<_>>();
-    let attrs = ["alt", "class", "height", "href", "src", "title", "width"]
+    let attrs = ["alt", "class", "height", "src", "title", "width"]
         .into_iter()
         .collect::<HashSet<_>>();
     let schemes = ["http", "https", "mailto"]
@@ -475,7 +474,9 @@ mod tests {
         assert!(!content.contains("Navigation and ads"));
         assert!(!content.contains("<script"));
         assert!(!content.contains("javascript:"));
-        assert!(content.contains("href=\"https://example.org/next\""));
+        assert!(content.contains("next"));
+        assert!(!content.contains("<a"));
+        assert!(!content.contains("href="));
     }
 
     #[test]

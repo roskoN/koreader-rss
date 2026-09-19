@@ -20,6 +20,7 @@
 - Added backend refresh `status`, `--reason manual|wake`, article status/list support in the KOReader menu, explicit HTTP compression negotiation, and EXIF-aware image orientation before grayscale/resize.
 - Added feed content/remove selector storage and bounded selector application before Readability, plus selector fixture coverage; current ARM backend/plugin were redeployed after these changes.
 - Review follow-up addressed: refresh status now includes outcome/failure/budget/reason fields; feed/article machine output is sanitized; All Articles has offset paging and per-feed action menus; article long-press opens external URLs; selector extraction covers configured basic selectors; Retry-After accepts both delta-seconds and HTTP-date values.
+- Extracted webpage HTML now strips anchor elements and `href` attributes entirely while preserving link text, producing plain reader-oriented content without embedded navigation links.
 - Validation passed: `make test` (35 tests), `make validate`, `make benchmark` (100 materializations: 0.15 s, max RSS 6460 KB), LuaJIT syntax compilation, `make test-arm`, `make validate-device`, and `git diff --check`.
 - Full extraction validation passed: `cargo test --workspace` (34 tests), Clippy, and `make test-arm`; the ARM release binary is 5,086,716 bytes (about 1.30 MB larger than the prior 3,791,876-byte build due to HTML parser/sanitizer dependencies).
 
