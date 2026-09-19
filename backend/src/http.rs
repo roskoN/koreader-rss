@@ -10,6 +10,14 @@ pub const MAX_FEED_BYTES: u64 = 4 * 1024 * 1024;
 pub const MAX_PAGE_BYTES: u64 = 8 * 1024 * 1024;
 pub const MAX_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
 
+fn retry_after_seconds(value: &str) -> Option<i64> {
+    value
+        .trim()
+        .parse::<i64>()
+        .ok()
+        .map(|seconds| seconds.clamp(0, 48 * 60 * 60))
+}
+
 #[derive(Debug, Clone)]
 pub struct FeedRequest<'a> {
     pub url: &'a str,
@@ -90,8 +98,7 @@ impl HttpClient {
                 .headers()
                 .get("retry-after")
                 .and_then(|value| value.to_str().ok())
-                .and_then(|value| value.trim().parse::<i64>().ok())
-                .map(|seconds| seconds.clamp(0, 48 * 60 * 60));
+                .and_then(retry_after_seconds);
             return Err(Error::Http {
                 message: format!("feed returned HTTP {status}"),
                 retry_after_s: if matches!(status, 429 | 503) {
@@ -178,5 +185,13 @@ mod tests {
             .expect_err("scheme must fail")
             .to_string()
             .contains("http"));
+    }
+
+    #[test]
+    fn retry_after_is_bounded_and_rejects_dates_without_clock_dependency() {
+        assert_eq!(retry_after_seconds("120"), Some(120));
+        assert_eq!(retry_after_seconds("999999"), Some(48 * 60 * 60));
+        assert_eq!(retry_after_seconds("-1"), Some(0));
+        assert_eq!(retry_after_seconds("Wed, 21 Oct 2015 07:28:00 GMT"), None);
     }
 }

@@ -207,6 +207,16 @@ progress stdout until completion (structured status goes to SQLite).
 
 ## 12. Uncertainty carried forward from STATUS.md
 
+## 13. Automated validation
+
+Run `make validate` before a device session. It exercises a fixture database,
+50 short-timeout materialization interruption boundaries, temporary-file
+cleanup, cache reconstruction, and the database probe. Run
+`make validate-device` after deploying the backend to run the same fixture,
+materialization timing, database/cache probe, and concurrent read checks over
+SSH. These checks do not establish KOReader rendering, plugin menu behavior,
+or suspend/battery behavior; retain those observations in the log above.
+
 - Hardware SQLite/data-URI rendering, filesystem locking/journal interruption,
   and wake/suspend behavior remain **NEEDS EXPERIMENT** (§1, §6, §10).
 - Wake hook, Wi-Fi readiness, suspend interaction, execution window, battery
