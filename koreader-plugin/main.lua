@@ -404,7 +404,7 @@ end
 
 function RSSReader:addToMainMenu(menu_items)
     menu_items.rss_reader_probe = {
-        text = _("News integration probe"),
+        text = _("RSS Reader"),
         sub_item_table = {
             {
                 text = _("Unread"),
