@@ -18,6 +18,7 @@
 ## Important discoveries
 
 - Kindle access was previously verified at `/mnt/us/koreader`; device is ARMv7 i.MX6 SoloLite with NEON/VFPv3, 502 MiB RAM, 1072×1448/1448×1072 framebuffer modes, and 5.8 GiB free user storage. Static ARM backend probes passed on-device, including HTTPS example.com.
+- **VERIFIED on 2026-09-19:** `KOREADER_DIR=/mnt/us/koreader make kindle-test` completed on Kindle firmware/kernel `4.1.15-lab126`, model `Lab126 i.MX6SLL Board`, KOReader `v2026.07.1`, with 502 MiB RAM, 1072×1448 and 1448×1072 modes, `/mnt/us` on `fuse.fsp`, and static backend/HTTPS probes passing. A standalone KOReader LuaJIT SQLite probe failed because `package.loadlib` is unavailable outside the KOReader runtime; this does not establish plugin API failure.
 - Hardware KOReader SQLite/data-URI rendering, filesystem locking/journal interruption behavior, and wake/suspend behavior remain unverified.
 - Refresh-all now processes due feeds fairly from the persisted cursor; physical SQLite behavior and backoff timing still need real-device measurement.
 
@@ -27,7 +28,7 @@ Continue Milestones 4–7 in bounded slices: persisted scheduler state, validato
 
 ## Unresolved / evidence status
 
-- `NEEDS EXPERIMENT`: restore Kindle SSH access and record the Milestone 0 evidence report; verify installed KOReader Lua SQLite API, Base64 JPEG/PNG rendering, reader content viewport, journal locking, and KOReader cache artifacts.
+- `NEEDS EXPERIMENT`: run the SQLite probe inside KOReader's actual plugin/runtime context; verify Base64 JPEG/PNG rendering, reader content viewport, journal locking, and KOReader cache artifacts.
 - `NEEDS EXPERIMENT`: wake hook, Wi-Fi readiness, suspend interaction, useful execution window, and battery impact.
 - Extraction currently uses bounded article/body selection rather than the full Readability/ammonia pipeline from PLAN.md; feed-specific selectors are not implemented.
 
