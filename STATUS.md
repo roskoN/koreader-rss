@@ -27,6 +27,7 @@
 - OPML import is now supported from `koreader-plugin/feeds/*.opml`; the plugin imports all discovered `xmlUrl` entries at startup through the idempotent `feed import-opml` backend command. Deployment preserves the feeds directory.
 - Added destructive-but-confirmed KOReader actions to remove all stored articles or all feeds (including their dependent articles), with matching backend commands and test coverage.
 - Added and deployed `refresh-job.sh`, a one-shot unattended wrapper that waits for HTTPS readiness, runs a bounded `--reason wake` refresh, rotates logs, and leaves Kindle power management untouched. It is ready for a verified powerd/LIPC wake hook but is intentionally not self-scheduled.
+- Added `docs/BACKGROUND-SYNC.md` documenting the current wrapper, persisted scheduler, investigated powerd interfaces, validation workflow, and exact remaining wake-integration experiment.
 - Validation passed: `make test` (35 tests), `make validate`, `make benchmark` (100 materializations: 0.15 s, max RSS 6460 KB), LuaJIT syntax compilation, `make test-arm`, `make validate-device`, and `git diff --check`.
 - Full extraction validation passed: `cargo test --workspace` (34 tests), Clippy, and `make test-arm`; the ARM release binary is 5,086,716 bytes (about 1.30 MB larger than the prior 3,791,876-byte build due to HTML parser/sanitizer dependencies).
 
