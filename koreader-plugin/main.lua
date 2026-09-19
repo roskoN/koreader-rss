@@ -1,6 +1,8 @@
 local DataStorage = require("datastorage")
 local Device = require("device")
 local InfoMessage = require("ui/widget/infomessage")
+local InputDialog = require("ui/widget/inputdialog")
+local ConfirmBox = require("ui/widget/confirmbox")
 local Menu = require("ui/widget/menu")
 local NetworkMgr = require("ui/network/manager")
 local ReaderUI = require("apps/reader/readerui")
@@ -39,7 +41,7 @@ function RSSReader:showUnread()
     local statement
     local ok, result = pcall(function()
         local SQ3 = require("lua-ljsqlite3/init")
-        connection = SQ3.open(self.probe_database)
+        connection = SQ3.open(self.database)
         statement = connection:prepare([[
             SELECT a.id, a.title, f.title, a.sort_at
             FROM articles a JOIN feeds f ON f.id = a.feed_id
@@ -84,13 +86,75 @@ function RSSReader:showUnread()
         is_popout = false,
         title_bar_fm_style = true,
         onMenuSelect = function(_, item)
-            show(string.format(
-                _("Article %d is stored offline. Opening articles is implemented in Milestone 2."),
-                item.article_id
-            ))
+            self:openArticle(item.article_id)
         end,
     }
     UIManager:show(menu)
+end
+
+function RSSReader:markArticle(article_id, state)
+    self:runBackend({ self.backend, "--db", self.database, "mark", tostring(article_id), state },
+        _("Updating article…"), function() self:showUnread() end)
+end
+
+function RSSReader:showFeeds()
+    self:ensureDirectories()
+    self:runBackend({ self.backend, "--db", self.database, "feed", "list" },
+        _("Loading feeds…"), function(output)
+            local items = {}
+            for line in (output .. "\n"):gmatch("([^\n]*)\n") do
+                local id, enabled, title, url = line:match("^(%d+)\t([^\t]*)\t([^\t]*)\t(.+)$")
+                if id then
+                    table.insert(items, { feed_id = tonumber(id), text = (title ~= "" and title or url), mandatory = url })
+                end
+            end
+            if #items == 0 then show(_("No feeds configured.")); return end
+            local menu
+            menu = Menu:new{
+                title = _("Feeds"), item_table = items, covers_fullscreen = true,
+                onMenuSelect = function(_, item) self:confirmRemoveFeed(item.feed_id, item.text, menu) end,
+            }
+            UIManager:show(menu)
+        end)
+end
+
+function RSSReader:confirmRemoveFeed(feed_id, title, menu)
+    UIManager:show(ConfirmBox:new{
+        text = string.format(_("Remove feed '%s'?"), title),
+        ok_text = _("Remove"),
+        ok_callback = function()
+            self:runBackend({ self.backend, "--db", self.database, "feed", "remove", tostring(feed_id) },
+                _("Removing feed…"), function() UIManager:close(menu); self:showFeeds() end)
+        end,
+    })
+end
+
+function RSSReader:addFeedDialog()
+    local dialog
+    dialog = InputDialog:new{
+        title = _("Add feed URL"), input = "https://",
+        buttons = {{ text = _("Add"), callback = function()
+            local url = trim(dialog:getInputText())
+            if url == "" then return end
+            self:runBackend({ self.backend, "--db", self.database, "feed", "add", url },
+                _("Adding feed…"), function() show(_("Feed added.")) end)
+        end }},
+    }
+    UIManager:show(dialog)
+end
+
+function RSSReader:openArticle(article_id)
+    local ok, err = self:ensureDirectories()
+    if not ok then show(tostring(err)); return end
+    self:runBackend({ self.backend, "--db", self.database, "materialize", tostring(article_id), "--cache", self.cache_dir },
+        _("Opening article…"), function(output)
+            local path = trim(output):match("([^\r\n]+)$")
+            if not path or path == "" then show(_("Backend returned no article path.")); return end
+            ReaderUI:showReader(path, nil, nil, nil, function()
+                self:runBackend({ self.backend, "--db", self.database, "mark", tostring(article_id), "read" },
+                    _("Marking article read…"), function() end)
+            end)
+        end)
 end
 
 function RSSReader:ensureDirectories()
@@ -211,6 +275,14 @@ function RSSReader:addToMainMenu(menu_items)
             {
                 text = _("Unread"),
                 callback = function() self:showUnread() end,
+            },
+            {
+                text = _("Feeds"),
+                callback = function() self:showFeeds() end,
+            },
+            {
+                text = _("Add feed"),
+                callback = function() self:addFeedDialog() end,
             },
             {
                 text = _("Environment and paths"),

@@ -16,6 +16,30 @@ fn now() -> i64 {
 }
 
 pub fn run(store: &mut Store, feed_id: i64, budget_s: u64) -> Result<(usize, usize), Error> {
+    let started_at = now();
+    let run_id = store.begin_refresh_run(crate::store::RUN_REASON_MANUAL, budget_s, started_at)?;
+    let result = run_one(store, feed_id, budget_s);
+    let (inserted, failures) = match &result {
+        Ok(counts) => *counts,
+        Err(_) => (0, 1),
+    };
+    if let Some(feed) = store.feed(Some(feed_id))? {
+        store.record_feed_attempt(run_id, &feed, inserted, failures)?;
+    }
+    store.finish_refresh_run(
+        run_id,
+        now(),
+        if result.is_ok() && failures == 0 {
+            crate::store::RUN_OUTCOME_SUCCESS
+        } else {
+            crate::store::RUN_OUTCOME_FAILED
+        },
+        result.as_ref().err().map(ToString::to_string).as_deref(),
+    )?;
+    result
+}
+
+fn run_one(store: &mut Store, feed_id: i64, budget_s: u64) -> Result<(usize, usize), Error> {
     let feed = store
         .feed(Some(feed_id))?
         .ok_or_else(|| Error::message("feed not found or disabled"))?;
@@ -68,8 +92,9 @@ pub fn run(store: &mut Store, feed_id: i64, budget_s: u64) -> Result<(usize, usi
             };
             let mut inserted = 0;
             let mut failures = 0;
+            let client = HttpClient::new();
             for entry in &parsed.entries {
-                match insert_entry(store, feed.id, entry, fetched_at) {
+                match insert_entry(store, feed.id, entry, fetched_at, &client) {
                     Ok(true) => inserted += 1,
                     Ok(false) => {}
                     Err(error) => {
@@ -93,6 +118,7 @@ pub fn run(store: &mut Store, feed_id: i64, budget_s: u64) -> Result<(usize, usi
                     fetched_at,
                     fetched_at + 21_600,
                 )?;
+                let _ = store.prune(fetched_at)?;
             } else {
                 store.update_feed_failure(
                     feed.id,
@@ -105,28 +131,82 @@ pub fn run(store: &mut Store, feed_id: i64, budget_s: u64) -> Result<(usize, usi
     }
 }
 
+pub fn run_all(store: &mut Store, budget_s: u64) -> Result<(usize, usize), Error> {
+    let run_id = store.begin_refresh_run(crate::store::RUN_REASON_MANUAL, budget_s, now())?;
+    let started = std::time::Instant::now();
+    let mut inserted = 0;
+    let mut failures = 0;
+    for feed_id in store.due_feeds(now())? {
+        if started.elapsed() >= Duration::from_secs(budget_s) {
+            break;
+        }
+        let feed = store.feed(Some(feed_id))?;
+        match run_one(
+            store,
+            feed_id,
+            budget_s.saturating_sub(started.elapsed().as_secs()),
+        ) {
+            Ok((new, failed)) => {
+                inserted += new;
+                failures += failed;
+                if let Some(feed) = feed.as_ref() {
+                    store.record_feed_attempt(run_id, feed, new, failed)?;
+                }
+            }
+            Err(error) => {
+                failures += 1;
+                if let Some(feed) = feed.as_ref() {
+                    store.record_feed_attempt(run_id, feed, 0, 1)?;
+                }
+                let _ = error;
+            }
+        }
+    }
+    store.finish_refresh_run(
+        run_id,
+        now(),
+        if failures == 0 {
+            crate::store::RUN_OUTCOME_SUCCESS
+        } else {
+            crate::store::RUN_OUTCOME_PARTIAL
+        },
+        None,
+    )?;
+    Ok((inserted, failures))
+}
+
 fn insert_entry(
     store: &mut Store,
     feed_id: i64,
     entry: &ParsedEntry,
     fetched_at: i64,
+    client: &HttpClient,
 ) -> Result<bool, Error> {
-    let html = article::wrap(entry)?;
+    let mut source_kind = 1;
+    let mut source = entry.clone();
+    if source.content.as_deref().is_none() && source.url.is_some() {
+        let (_effective, page) = client.fetch_page(source.url.as_deref().unwrap())?;
+        let body = String::from_utf8(page).map_err(|_| Error::message("page is not UTF-8"))?;
+        source.content = Some(extract_body(&body));
+        source_kind = 2;
+    }
+    let html = article::wrap(&source)?;
+    let html = article::embed_images(&html, source.url.as_deref(), client);
     let blob = article::compress(&html)?;
     let changed = store.insert_article(&ArticleInsert {
         feed_id,
         dedupe_key: &entry.dedupe_key,
-        guid: (!entry.id.is_empty()).then_some(entry.id.as_str()),
-        url: entry.url.as_deref(),
-        title: entry.title.as_deref().unwrap_or("(untitled)"),
-        author: entry.authors.first().map(String::as_str),
-        published_at: entry.published_at,
-        sort_at: entry
+        guid: (!source.id.is_empty()).then_some(source.id.as_str()),
+        url: source.url.as_deref(),
+        title: source.title.as_deref().unwrap_or("(untitled)"),
+        author: source.authors.first().map(String::as_str),
+        published_at: source.published_at,
+        sort_at: source
             .published_at
             .or(entry.updated_at)
             .unwrap_or(fetched_at),
         fetched_at,
-        source_kind: 1,
+        source_kind,
         compression_codec: article::COMPRESSION_CODEC,
         content_format: article::CONTENT_FORMAT,
         storage_version: article::STORAGE_VERSION,
@@ -134,7 +214,35 @@ fn insert_entry(
         content_blob: &blob,
     })?;
     if changed {
-        store.clear_entry_failure(feed_id, &entry.dedupe_key)?;
+        store.clear_entry_failure(feed_id, &source.dedupe_key)?;
     }
     Ok(changed)
+}
+
+fn extract_body(html: &str) -> String {
+    let lower = html.to_ascii_lowercase();
+    if let (Some(start), Some(end)) = (lower.find("<article"), lower.rfind("</article>")) {
+        return html[start..end + 10].to_owned();
+    }
+    if let (Some(start), Some(end)) = (lower.find("<body"), lower.rfind("</body>")) {
+        return html[start..end + 7].to_owned();
+    }
+    html.to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_body;
+
+    #[test]
+    fn extracts_article_or_body_without_network() {
+        assert_eq!(
+            extract_body("<html><article>story</article></html>"),
+            "<article>story</article>"
+        );
+        assert_eq!(
+            extract_body("<html><body>story</body></html>"),
+            "<body>story</body>"
+        );
+    }
 }

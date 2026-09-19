@@ -7,6 +7,8 @@ use ureq::ResponseExt;
 use crate::Error;
 
 pub const MAX_FEED_BYTES: u64 = 4 * 1024 * 1024;
+pub const MAX_PAGE_BYTES: u64 = 8 * 1024 * 1024;
+pub const MAX_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct FeedRequest<'a> {
@@ -99,6 +101,52 @@ impl HttpClient {
             last_modified,
             bytes,
         })
+    }
+
+    pub fn fetch_page(&self, url: &str) -> Result<(String, Vec<u8>), Error> {
+        if !(url.starts_with("https://") || url.starts_with("http://")) {
+            return Err(Error::message("page URL must use http:// or https://"));
+        }
+        let mut response = self
+            .agent
+            .get(url)
+            .call()
+            .map_err(|error| Error::message(format!("page request failed: {error}")))?;
+        let status = response.status().as_u16();
+        if !(200..300).contains(&status) {
+            return Err(Error::message(format!("page returned HTTP {status}")));
+        }
+        let effective = response.get_uri().to_string();
+        let bytes = response
+            .body_mut()
+            .with_config()
+            .limit(MAX_PAGE_BYTES)
+            .read_to_vec()
+            .map_err(|error| Error::message(format!("cannot read bounded page: {error}")))?;
+        Ok((effective, bytes))
+    }
+
+    pub fn fetch_image(&self, url: &str) -> Result<Vec<u8>, Error> {
+        if !(url.starts_with("https://") || url.starts_with("http://")) {
+            return Err(Error::message("image URL must use http:// or https://"));
+        }
+        let mut response = self
+            .agent
+            .get(url)
+            .call()
+            .map_err(|error| Error::message(format!("image request failed: {error}")))?;
+        if !(200..300).contains(&response.status().as_u16()) {
+            return Err(Error::message(format!(
+                "image returned HTTP {}",
+                response.status().as_u16()
+            )));
+        }
+        response
+            .body_mut()
+            .with_config()
+            .limit(MAX_IMAGE_BYTES)
+            .read_to_vec()
+            .map_err(|error| Error::message(format!("cannot read bounded image: {error}")))
     }
 }
 

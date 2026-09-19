@@ -99,7 +99,19 @@ fn parse_entry(entry: &Entry) -> ParsedEntry {
     let authors = entry
         .authors
         .iter()
-        .map(|person| person.name.clone())
+        .map(|person| {
+            if person.name.trim().is_empty()
+                || matches!(
+                    person.name.as_str(),
+                    "author" | "webMaster" | "managingEditor"
+                )
+            {
+                person.email.clone().unwrap_or_default()
+            } else {
+                person.name.clone()
+            }
+        })
+        .filter(|author| !author.trim().is_empty())
         .collect();
     let content = entry.content.as_ref().and_then(|text| text.body.clone());
     let summary = entry.summary.as_ref().map(|text| text.content.clone());
@@ -456,9 +468,8 @@ mod tests {
             }
         }
         // Two feeds that differ only in formatting produce the same keys.
-   ")
-            .replace("</item>", "\n</item>\n");
-        let reformatted = parse_feed(reformatted.as_bytes()).unwrap();
+        let reformatted_xml = RSS_FIXTURE.replace("</item>", "\n</item>\n");
+        let reformatted = parse_feed(reformatted_xml.as_bytes()).unwrap();
         assert_eq!(reformatted.entries[0].dedupe_key, a.entries[0].dedupe_key);
     }
 

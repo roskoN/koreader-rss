@@ -57,7 +57,7 @@ impl From<image::ImageError> for Error {
 }
 
 fn usage() -> &'static str {
-    "usage:\n  rss-backend --version\n  rss-backend doctor\n  rss-backend http-probe --url HTTPS_URL\n  rss-backend init-probe-db --db PATH\n  rss-backend materialize-fixture --out PATH\n  rss-backend --db PATH feed add URL\n  rss-backend --db PATH refresh --feed ID [--budget SEC]"
+    "usage:\n  rss-backend --version\n  rss-backend doctor\n  rss-backend http-probe --url HTTPS_URL\n  rss-backend init-probe-db --db PATH\n  rss-backend materialize-fixture --out PATH\n  rss-backend --db PATH feed add URL\n  rss-backend --db PATH feed remove ID\n  rss-backend --db PATH refresh [--feed ID] [--budget SEC]\n  rss-backend --db PATH materialize ID --cache DIR\n  rss-backend --db PATH mark ID read|unread"
 }
 
 fn value_argument(arguments: &[String], flag: &str) -> Result<String, Error> {
@@ -95,13 +95,76 @@ fn run(arguments: &[String]) -> Result<(), Error> {
                 let id = store.add_feed(&arguments[4], unix_now())?;
                 println!("{id}");
             }
+            Some("feed")
+                if arguments.get(3).map(String::as_str) == Some("remove")
+                    && arguments.len() == 5 =>
+            {
+                let id = arguments[4]
+                    .parse::<i64>()
+                    .map_err(|_| Error::message("invalid feed ID"))?;
+                if !store.remove_feed(id)? {
+                    return Err(Error::message("feed not found"));
+                }
+            }
+            Some("feed")
+                if arguments.get(3).map(String::as_str) == Some("list") && arguments.len() == 4 =>
+            {
+                for feed in store.list_feeds()? {
+                    println!(
+                        "{}\t{}\t{}\t{}",
+                        feed.id,
+                        if feed.enabled { "enabled" } else { "disabled" },
+                        feed.title.as_deref().unwrap_or(""),
+                        feed.source_url
+                    );
+                }
+            }
             Some("refresh") => {
                 let feed_id = integer_argument(&arguments[3..], "--feed", 0)?;
-                if feed_id == 0 {
-                    return Err(Error::message("refresh requires --feed ID"));
-                }
                 let budget = integer_argument(&arguments[3..], "--budget", 240)?;
-                let _ = refresh::run(&mut store, feed_id as i64, budget)?;
+                if feed_id == 0 {
+                    let _ = refresh::run_all(&mut store, budget)?;
+                } else {
+                    let _ = refresh::run(&mut store, feed_id as i64, budget)?;
+                }
+            }
+            Some("materialize")
+                if arguments.len() == 6
+                    && arguments[3].parse::<i64>().is_ok()
+                    && arguments[4] == "--cache" =>
+            {
+                let id = arguments[3]
+                    .parse::<i64>()
+                    .map_err(|_| Error::message(usage()))?;
+                let cache = PathBuf::from(&arguments[5]);
+                let content = store
+                    .article_content(id)?
+                    .ok_or_else(|| Error::message("article not found"))?;
+                if content.compression_codec != article::COMPRESSION_CODEC {
+                    return Err(Error::message("unsupported article compression codec"));
+                }
+                let path = article::materialize(
+                    id,
+                    content.storage_version,
+                    content.fetched_at,
+                    &content.content_blob,
+                    content.uncompressed_size,
+                    &cache,
+                )?;
+                println!("{}", path.display());
+            }
+            Some("mark") if arguments.len() == 5 => {
+                let id = arguments[3]
+                    .parse::<i64>()
+                    .map_err(|_| Error::message("invalid article ID"))?;
+                let read = match arguments[4].as_str() {
+                    "read" => true,
+                    "unread" => false,
+                    _ => return Err(Error::message(usage())),
+                };
+                if !store.mark_read(id, read, unix_now())? {
+                    return Err(Error::message("article not found"));
+                }
             }
             _ => return Err(Error::message(usage())),
         }
