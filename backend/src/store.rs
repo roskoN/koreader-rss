@@ -604,6 +604,12 @@ impl Store {
         Ok(pages.saturating_mul(page_size))
     }
 
+    pub fn freelist_pages(&self) -> Result<i64, Error> {
+        Ok(self
+            .connection
+            .query_row("PRAGMA freelist_count", [], |row| row.get(0))?)
+    }
+
     pub fn list_articles(
         &self,
         limit: usize,
@@ -849,5 +855,26 @@ mod tests {
         let directory = tempfile::tempdir().expect("temp directory");
         let store = Store::open(&directory.path().join("rss.sqlite3")).expect("open store");
         assert!(store.database_bytes().expect("size") > 0);
+    }
+
+    #[test]
+    fn retention_prefers_removing_read_articles() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let mut store = Store::open(&directory.path().join("rss.sqlite3")).expect("open store");
+        let feed = store.add_feed("https://example.org/feed", 1).expect("feed");
+        store
+            .insert_article(&article(feed, "read", "Read", 1))
+            .expect("article");
+        store
+            .insert_article(&article(feed, "unread", "Unread", 2))
+            .expect("article");
+        store.mark_read(1, true, 3).expect("mark read");
+        store
+            .connection
+            .execute("UPDATE settings SET max_articles_total=1", [])
+            .expect("setting");
+        store.prune(100).expect("prune");
+        assert_eq!(store.article_count().expect("count"), 1);
+        assert_eq!(store.list_unread(10).expect("unread")[0].title, "Unread");
     }
 }

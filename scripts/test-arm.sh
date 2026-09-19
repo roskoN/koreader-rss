@@ -26,7 +26,11 @@ tmp_dir=$(mktemp -d /tmp/rss-backend-arm.XXXXXX)
 trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
 qemu-arm -cpu cortex-a9 "$binary" init-probe-db --db "$tmp_dir/probe.sqlite3"
 qemu-arm -cpu cortex-a9 "$binary" materialize-fixture --out "$tmp_dir/fixture.html"
+mkdir "$tmp_dir/cache"
+qemu-arm -cpu cortex-a9 "$binary" --db "$tmp_dir/fixture.sqlite3" init-fixture-db
+qemu-arm -cpu cortex-a9 "$binary" --db "$tmp_dir/fixture.sqlite3" device-probe --cache "$tmp_dir/cache"
 test -s "$tmp_dir/probe.sqlite3"
+test -s "$tmp_dir/fixture.sqlite3"
 test -s "$tmp_dir/fixture.html"
 grep -q 'data:image/png;base64,' "$tmp_dir/fixture.html"
 grep -q 'data:image/jpeg;base64,' "$tmp_dir/fixture.html"

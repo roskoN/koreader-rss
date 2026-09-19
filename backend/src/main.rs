@@ -57,7 +57,7 @@ impl From<image::ImageError> for Error {
 }
 
 fn usage() -> &'static str {
-    "usage:\n  rss-backend --version\n  rss-backend doctor\n  rss-backend http-probe --url HTTPS_URL\n  rss-backend init-probe-db --db PATH\n  rss-backend materialize-fixture --out PATH\n  rss-backend --db PATH feed add URL\n  rss-backend --db PATH feed remove ID\n  rss-backend --db PATH refresh [--feed ID] [--budget SEC]\n  rss-backend --db PATH materialize ID --cache DIR\n  rss-backend --db PATH mark ID read|unread"
+    "usage:\n  rss-backend --version\n  rss-backend doctor\n  rss-backend http-probe --url HTTPS_URL\n  rss-backend init-probe-db --db PATH\n  rss-backend materialize-fixture --out PATH\n  rss-backend --db PATH feed add URL\n  rss-backend --db PATH feed list\n  rss-backend --db PATH feed remove ID\n  rss-backend --db PATH init-fixture-db\n  rss-backend --db PATH device-probe --cache DIR\n  rss-backend --db PATH refresh [--feed ID] [--budget SEC]\n  rss-backend --db PATH materialize ID --cache DIR\n  rss-backend --db PATH mark ID read|unread"
 }
 
 fn value_argument(arguments: &[String], flag: &str) -> Result<String, Error> {
@@ -118,6 +118,53 @@ fn run(arguments: &[String]) -> Result<(), Error> {
                         feed.source_url
                     );
                 }
+            }
+            Some("init-fixture-db") if arguments.len() == 3 => {
+                let feed_id = store.add_feed("https://example.org/fixture-feed", unix_now())?;
+                let html = fixture::html(fixture::DEFAULT_TITLE)?;
+                let blob = article::compress(&html)?;
+                let fetched_at = unix_now();
+                store.insert_article(&store::ArticleInsert {
+                    feed_id,
+                    dedupe_key: "g:milestone0-fixture",
+                    guid: Some("milestone0-fixture"),
+                    url: Some("https://example.org/fixture"),
+                    title: fixture::DEFAULT_TITLE,
+                    author: Some("rss-backend"),
+                    published_at: Some(fetched_at),
+                    sort_at: fetched_at,
+                    fetched_at,
+                    source_kind: 1,
+                    compression_codec: article::COMPRESSION_CODEC,
+                    content_format: article::CONTENT_FORMAT,
+                    storage_version: article::STORAGE_VERSION,
+                    uncompressed_size: html.len(),
+                    content_blob: &blob,
+                })?;
+                println!(
+                    "fixture feed_id={feed_id} article_count={}",
+                    store.article_count()?
+                );
+            }
+            Some("device-probe") if arguments.len() == 5 && arguments[3] == "--cache" => {
+                let cache = PathBuf::from(&arguments[4]);
+                let cache_files = std::fs::read_dir(&cache)
+                    .ok()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Result::ok)
+                    .filter_map(|entry| entry.metadata().ok().map(|meta| (entry, meta)))
+                    .filter(|(entry, _)| entry.path().extension().and_then(|ext| ext.to_str()) == Some("html"))
+                    .filter(|(_, meta)| meta.is_file())
+                    .collect::<Vec<_>>();
+                let cache_bytes: u64 = cache_files.iter().map(|(_, meta)| meta.len()).sum();
+                println!("schema_version={}", store.schema_version()?);
+                println!("journal_mode={}", store.journal_mode()?);
+                println!("database_bytes={}", store.database_bytes()?);
+                println!("freelist_pages={}", store.freelist_pages()?);
+                println!("article_count={}", store.article_count()?);
+                println!("cache_files={}", cache_files.len());
+                println!("cache_bytes={cache_bytes}");
             }
             Some("refresh") => {
                 let feed_id = integer_argument(&arguments[3..], "--feed", 0)?;
@@ -229,5 +276,30 @@ mod tests {
     fn requires_exact_path_flag() {
         assert!(path_argument(&[], "--db").is_err());
         assert!(path_argument(&["--wrong".to_owned(), "x".to_owned()], "--db").is_err());
+    }
+
+    #[test]
+    fn feed_cli_and_fixture_database_commands_are_repeatable() {
+        let directory = tempfile::tempdir().expect("directory");
+        let db = directory.path().join("rss.sqlite3");
+        let db_arg = db.display().to_string();
+        run(&[
+            "--db".into(),
+            db_arg.clone(),
+            "feed".into(),
+            "add".into(),
+            "https://example.org/feed".into(),
+        ])
+        .expect("add feed");
+        run(&["--db".into(), db_arg.clone(), "feed".into(), "list".into()]).expect("list feeds");
+        run(&["--db".into(), db_arg.clone(), "init-fixture-db".into()]).expect("fixture database");
+        run(&[
+            "--db".into(),
+            db_arg.clone(),
+            "device-probe".into(),
+            "--cache".into(),
+            directory.path().display().to_string(),
+        ])
+        .expect("device probe");
     }
 }
