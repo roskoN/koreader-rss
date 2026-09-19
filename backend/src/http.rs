@@ -11,11 +11,15 @@ pub const MAX_PAGE_BYTES: u64 = 8 * 1024 * 1024;
 pub const MAX_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
 
 fn retry_after_seconds(value: &str) -> Option<i64> {
-    value
-        .trim()
-        .parse::<i64>()
-        .ok()
-        .map(|seconds| seconds.clamp(0, 48 * 60 * 60))
+    if let Ok(seconds) = value.trim().parse::<i64>() {
+        return Some(seconds.clamp(0, 48 * 60 * 60));
+    }
+    httpdate::parse_http_date(value).ok().map(|date| {
+        date.duration_since(std::time::SystemTime::now())
+            .unwrap_or_default()
+            .as_secs()
+            .min(48 * 60 * 60) as i64
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -195,6 +199,6 @@ mod tests {
         assert_eq!(retry_after_seconds("120"), Some(120));
         assert_eq!(retry_after_seconds("999999"), Some(48 * 60 * 60));
         assert_eq!(retry_after_seconds("-1"), Some(0));
-        assert_eq!(retry_after_seconds("Wed, 21 Oct 2015 07:28:00 GMT"), None);
+        assert!(retry_after_seconds("Wed, 21 Oct 2015 07:28:00 GMT").is_some());
     }
 }

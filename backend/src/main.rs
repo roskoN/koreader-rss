@@ -88,6 +88,10 @@ fn integer_argument(arguments: &[String], flag: &str, default: u64) -> Result<u6
     }
 }
 
+fn machine_field(value: &str) -> String {
+    value.replace(['\t', '\r', '\n'], " ")
+}
+
 fn run(arguments: &[String]) -> Result<(), Error> {
     if arguments.first().map(String::as_str) == Some("--db") {
         let db = path_argument(&arguments[..2], "--db")?;
@@ -119,8 +123,8 @@ fn run(arguments: &[String]) -> Result<(), Error> {
                         "{}\t{}\t{}\t{}",
                         feed.id,
                         if feed.enabled { "enabled" } else { "disabled" },
-                        feed.title.as_deref().unwrap_or(""),
-                        feed.source_url
+                        machine_field(feed.title.as_deref().unwrap_or("")),
+                        machine_field(&feed.source_url)
                     );
                 }
             }
@@ -209,6 +213,14 @@ fn run(arguments: &[String]) -> Result<(), Error> {
                     println!("finished_at={}", run.finished_at);
                     println!("feeds_checked={}", run.feeds_checked);
                     println!("new_articles={}", run.new_articles);
+                    println!("failed_feeds={}", run.failed_feeds);
+                    println!("budget_s={}", run.budget_s);
+                    println!("reason={}", run.reason);
+                    println!(
+                        "outcome={}",
+                        run.outcome
+                            .map_or_else(|| "running".to_owned(), |value| value.to_string())
+                    );
                     println!("last_error={}", run.last_error.unwrap_or_default());
                 } else {
                     println!("run_id=none");

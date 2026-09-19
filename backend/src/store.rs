@@ -41,6 +41,10 @@ pub struct RefreshRunSummary {
     pub finished_at: i64,
     pub feeds_checked: i64,
     pub new_articles: i64,
+    pub failed_feeds: i64,
+    pub budget_s: i64,
+    pub reason: i64,
+    pub outcome: Option<i64>,
     pub last_error: Option<String>,
 }
 
@@ -71,6 +75,7 @@ pub struct ArticleSummary {
     pub feed_title: String,
     pub sort_at: i64,
     pub is_read: bool,
+    pub url: Option<String>,
 }
 
 #[derive(Debug)]
@@ -671,11 +676,12 @@ impl Store {
     pub fn latest_refresh_run(&self) -> Result<Option<RefreshRunSummary>, Error> {
         self.connection
             .query_row(
-                "SELECT id,started_at,COALESCE(finished_at,0),feeds_checked,new_articles,last_error FROM refresh_runs ORDER BY started_at DESC,id DESC LIMIT 1",
+                "SELECT id,started_at,COALESCE(finished_at,0),feeds_checked,new_articles,failed_feeds,budget_s,reason,outcome,last_error FROM refresh_runs ORDER BY started_at DESC,id DESC LIMIT 1",
                 [],
                 |row| Ok(RefreshRunSummary {
                     id: row.get(0)?, started_at: row.get(1)?, finished_at: row.get(2)?,
-                    feeds_checked: row.get(3)?, new_articles: row.get(4)?, last_error: row.get(5)?,
+                    feeds_checked: row.get(3)?, new_articles: row.get(4)?, failed_feeds: row.get(5)?,
+                    budget_s: row.get(6)?, reason: row.get(7)?, outcome: row.get(8)?, last_error: row.get(9)?,
                 }),
             )
             .optional()
@@ -689,7 +695,7 @@ impl Store {
     ) -> Result<Vec<ArticleSummary>, Error> {
         let limit = i64::try_from(limit).map_err(|_| Error::message("limit is too large"))?;
         let filter = if unread_only { "WHERE a.is_read=0" } else { "" };
-        let sql = format!("SELECT a.id,a.title,COALESCE(f.title,f.source_url),a.sort_at,a.is_read FROM articles a JOIN feeds f ON f.id=a.feed_id {filter} ORDER BY a.sort_at DESC,a.id DESC LIMIT ?1");
+        let sql = format!("SELECT a.id,a.title,COALESCE(f.title,f.source_url),a.sort_at,a.is_read,a.url FROM articles a JOIN feeds f ON f.id=a.feed_id {filter} ORDER BY a.sort_at DESC,a.id DESC LIMIT ?1");
         let mut statement = self.connection.prepare(&sql)?;
         let rows = statement.query_map(params![limit], |row| {
             Ok(ArticleSummary {
@@ -698,6 +704,7 @@ impl Store {
                 feed_title: row.get(2)?,
                 sort_at: row.get(3)?,
                 is_read: row.get::<_, i64>(4)? != 0,
+                url: row.get(5)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -765,7 +772,7 @@ impl Store {
     pub fn list_unread(&self, limit: usize) -> Result<Vec<ArticleSummary>, Error> {
         let limit = i64::try_from(limit).map_err(|_| Error::message("limit is too large"))?;
         let mut statement = self.connection.prepare(
-            "SELECT a.id,a.title,COALESCE(f.title,f.source_url),a.sort_at,a.is_read
+            "SELECT a.id,a.title,COALESCE(f.title,f.source_url),a.sort_at,a.is_read,a.url
              FROM articles a JOIN feeds f ON f.id=a.feed_id
              WHERE a.is_read=0 ORDER BY a.sort_at DESC,a.id DESC LIMIT ?1",
         )?;
@@ -776,6 +783,7 @@ impl Store {
                 feed_title: row.get(2)?,
                 sort_at: row.get(3)?,
                 is_read: row.get::<_, i64>(4)? != 0,
+                url: row.get(5)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)

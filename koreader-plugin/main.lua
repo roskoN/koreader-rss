@@ -43,7 +43,7 @@ function RSSReader:showUnread()
         local SQ3 = require("lua-ljsqlite3/init")
         connection = SQ3.open(self.database)
         statement = connection:prepare([[
-            SELECT a.id, a.title, f.title, a.sort_at
+            SELECT a.id, a.title, f.title, a.sort_at, a.url
             FROM articles a JOIN feeds f ON f.id = a.feed_id
             WHERE a.is_read = 0
             ORDER BY a.sort_at DESC, a.id DESC
@@ -62,6 +62,7 @@ function RSSReader:showUnread()
                     tostring(row[3] or _("Unknown feed")),
                     published and os.date("%Y-%m-%d", published) or _("Unknown date")
                 ),
+                url = row[5],
             })
         end
         return items
@@ -88,6 +89,9 @@ function RSSReader:showUnread()
         onMenuSelect = function(_, item)
             self:openArticle(item.article_id)
         end,
+        onMenuHold = function(_, item)
+            if item.url and item.url ~= "" then Device:openLink(item.url) end
+        end,
     }
     UIManager:show(menu)
 end
@@ -97,15 +101,16 @@ function RSSReader:markArticle(article_id, state)
         _("Updating article…"), function() self:showUnread() end)
 end
 
-function RSSReader:showAllArticles(feed_id, title)
+function RSSReader:showAllArticles(feed_id, title, offset)
+    offset = offset or 0
     local connection
     local statement
     local ok, result = pcall(function()
         local SQ3 = require("lua-ljsqlite3/init")
         connection = SQ3.open(self.database)
-        local sql = "SELECT a.id,a.title,COALESCE(f.title,f.source_url),a.sort_at FROM articles a JOIN feeds f ON f.id=a.feed_id"
+        local sql = "SELECT a.id,a.title,COALESCE(f.title,f.source_url),a.sort_at,a.url FROM articles a JOIN feeds f ON f.id=a.feed_id"
         if feed_id then sql = sql .. " WHERE a.feed_id = " .. tostring(feed_id) end
-        sql = sql .. " ORDER BY a.sort_at DESC,a.id DESC LIMIT 100"
+        sql = sql .. " ORDER BY a.sort_at DESC,a.id DESC LIMIT 100 OFFSET " .. tostring(offset)
         statement = connection:prepare(sql)
         local items = {}
         while true do
@@ -115,7 +120,11 @@ function RSSReader:showAllArticles(feed_id, title)
                 article_id = tonumber(row[1]),
                 text = tostring(row[2]),
                 mandatory = string.format("%s · %s", tostring(row[3]), os.date("%Y-%m-%d", tonumber(row[4]))),
+                url = row[5],
             })
+        end
+        if #items == 100 then
+            table.insert(items, { text = _("Next page →"), next_offset = offset + 100 })
         end
         return items
     end)
@@ -125,7 +134,17 @@ function RSSReader:showAllArticles(feed_id, title)
     if #result == 0 then show(_("No articles.")); return end
     local menu = Menu:new{
         title = title or _("All articles"), item_table = result, covers_fullscreen = true,
-        onMenuSelect = function(_, item) self:openArticle(item.article_id) end,
+        onMenuSelect = function(_, item)
+            if item.next_offset then
+                UIManager:close(menu)
+                self:showAllArticles(feed_id, title, item.next_offset)
+            else
+                self:openArticle(item.article_id)
+            end
+        end,
+        onMenuHold = function(_, item)
+            if item.url and item.url ~= "" then Device:openLink(item.url) end
+        end,
     }
     UIManager:show(menu)
 end
@@ -156,11 +175,31 @@ function RSSReader:showFeeds()
             local menu
             menu = Menu:new{
                 title = _("Feeds"), item_table = items, covers_fullscreen = true,
-                onMenuSelect = function(_, item) self:confirmRemoveFeed(item.feed_id, item.text, menu) end,
+                onMenuSelect = function(_, item) self:showFeedActions(item, menu) end,
                 onMenuHold = function(_, item) self:toggleFeed(item, menu) end,
             }
             UIManager:show(menu)
         end)
+end
+
+function RSSReader:showFeedActions(item, feeds_menu)
+    local actions = Menu:new{
+        title = item.text,
+        item_table = {
+            { text = _("Articles"), callback = function()
+                UIManager:close(actions); UIManager:close(feeds_menu)
+                self:showAllArticles(item.feed_id, item.text)
+            end },
+            { text = item.enabled and _("Disable feed") or _("Enable feed"), callback = function()
+                UIManager:close(actions); self:toggleFeed(item, feeds_menu)
+            end },
+            { text = _("Remove feed"), callback = function()
+                UIManager:close(actions); self:confirmRemoveFeed(item.feed_id, item.text, feeds_menu)
+            end },
+        },
+        covers_fullscreen = true,
+    }
+    UIManager:show(actions)
 end
 
 function RSSReader:toggleFeed(item, menu)

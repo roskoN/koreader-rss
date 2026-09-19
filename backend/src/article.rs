@@ -467,7 +467,7 @@ mod tests {
     fn readability_extracts_main_content_and_ammonia_sanitizes_it() {
         let page = r#"<html><head><title>Story</title></head><body>
             <nav class="navigation">Navigation and ads</nav><main><h1>Story</h1><p>Important text with enough words to identify the main article content clearly.</p>
-            <script>alert(1)</script><a href="javascript:bad()">safe label</a></main>
+            <script>alert(1)</script><a href="/next">next</a><a href="javascript:bad()">safe label</a></main>
         </body></html>"#;
         let content = extract_page_with_selectors(page, "https://example.org/story", None, None)
             .expect("extract");
@@ -475,6 +475,7 @@ mod tests {
         assert!(!content.contains("Navigation and ads"));
         assert!(!content.contains("<script"));
         assert!(!content.contains("javascript:"));
+        assert!(content.contains("href=\"https://example.org/next\""));
     }
 
     #[test]
