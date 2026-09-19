@@ -65,12 +65,12 @@ function RSSReader:showUnread()
             local published = tonumber(row[4])
             table.insert(items, {
                 article_id = tonumber(row[1]),
-                text = tostring(row[2]),
-                mandatory = string.format(
+                text = tostring(row[2]) .. "\n" .. string.format(
                     "%s · %s",
                     tostring(row[3] or _("Unknown feed")),
                     published and os.date("%Y-%m-%d", published) or _("Unknown date")
                 ),
+                multilines_forced = true,
                 url = row[5],
             })
         end
@@ -127,8 +127,8 @@ function RSSReader:showAllArticles(feed_id, title, offset)
             if not row then break end
             table.insert(items, {
                 article_id = tonumber(row[1]),
-                text = tostring(row[2]),
-                mandatory = string.format("%s · %s", tostring(row[3]), os.date("%Y-%m-%d", tonumber(row[4]))),
+                text = tostring(row[2]) .. "\n" .. string.format("%s · %s", tostring(row[3]), os.date("%Y-%m-%d", tonumber(row[4]))),
+                multilines_forced = true,
                 url = row[5],
             })
         end
