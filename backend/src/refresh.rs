@@ -251,16 +251,43 @@ fn insert_entry(
 ) -> Result<bool, Error> {
     let mut source_kind = 1;
     let mut source = entry.clone();
-    if source.content.as_deref().is_none() && source.url.is_some() {
-        let (effective, page) = client.fetch_page(source.url.as_deref().unwrap())?;
-        let body = String::from_utf8(page).map_err(|_| Error::message("page is not UTF-8"))?;
-        source.content = Some(article::extract_page_with_selectors(
-            &body,
-            &effective,
-            feed.content_selector.as_deref(),
-            feed.remove_selector.as_deref(),
-        )?);
-        source_kind = 2;
+    if let Some(url) = source.url.as_deref() {
+        // Prefer the canonical article page over RSS summaries/content. Keep
+        // usable RSS content if the page is unavailable, so one paywalled or
+        // broken article does not discard an otherwise valid feed entry.
+        match client.fetch_page(url).and_then(|(effective, page)| {
+            let body = String::from_utf8(page).map_err(|_| Error::message("page is not UTF-8"))?;
+            let content = article::extract_page_with_selectors(
+                &body,
+                &effective,
+                feed.content_selector.as_deref(),
+                feed.remove_selector.as_deref(),
+            )?;
+            Ok((content, effective))
+        }) {
+            Ok((content, _effective)) => {
+                source.content = Some(content);
+                source_kind = 2;
+            }
+            Err(error)
+                if source
+                    .content
+                    .as_deref()
+                    .is_some_and(|content| !content.trim().is_empty()) =>
+            {
+                store.record_entry_failure(
+                    feed.id,
+                    entry,
+                    fetched_at,
+                    &format!("full article unavailable; used RSS content: {error}"),
+                )?;
+            }
+            Err(error) => return Err(error),
+        }
+    } else if source.content.as_deref().is_none() {
+        return Err(Error::message(
+            "RSS entry has neither content nor article URL",
+        ));
     }
     let html = article::wrap(&source)?;
     let html = article::embed_images(&html, source.url.as_deref(), client);
