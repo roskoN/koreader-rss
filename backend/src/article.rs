@@ -1,5 +1,6 @@
 //! Minimal embedded-content article representation for the first feed slice.
 
+use std::collections::HashSet;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
@@ -20,6 +21,79 @@ pub const CONTENT_FORMAT: i64 = 1;
 pub const STORAGE_VERSION: i64 = 1;
 const CACHE_MAX_FILES: usize = 3;
 const CACHE_MAX_BYTES: u64 = 32 * 1024 * 1024;
+
+pub fn extract_page(html: &str, document_url: &str) -> Result<String, Error> {
+    let mut readability =
+        dom_smoothie::Readability::new(html, Some(document_url), None).map_err(|error| {
+            Error::message(format!("cannot initialize article extraction: {error}"))
+        })?;
+    let article = readability
+        .parse()
+        .map_err(|error| Error::message(format!("article extraction failed: {error}")))?;
+    let tags = [
+        "a",
+        "abbr",
+        "article",
+        "b",
+        "blockquote",
+        "br",
+        "code",
+        "dd",
+        "div",
+        "dl",
+        "dt",
+        "em",
+        "figcaption",
+        "figure",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "hr",
+        "i",
+        "img",
+        "li",
+        "ol",
+        "p",
+        "pre",
+        "q",
+        "s",
+        "small",
+        "span",
+        "strong",
+        "sub",
+        "sup",
+        "table",
+        "tbody",
+        "td",
+        "tfoot",
+        "th",
+        "thead",
+        "tr",
+        "u",
+        "ul",
+    ]
+    .into_iter()
+    .collect::<HashSet<_>>();
+    let attrs = ["alt", "class", "height", "href", "src", "title", "width"]
+        .into_iter()
+        .collect::<HashSet<_>>();
+    let schemes = ["http", "https", "mailto"]
+        .into_iter()
+        .collect::<HashSet<_>>();
+    let mut sanitizer = ammonia::Builder::default();
+    sanitizer
+        .tags(tags)
+        .generic_attributes(attrs)
+        .url_schemes(schemes);
+    let cleaned = sanitizer.clean(&article.content).to_string();
+    if cleaned.trim().is_empty() {
+        return Err(Error::message("article extraction produced empty content"));
+    }
+    Ok(cleaned)
+}
 
 fn escape(value: &str) -> String {
     value
@@ -326,6 +400,19 @@ mod tests {
         let html = wrap(&entry).expect("wrap");
         assert!(!html.contains("onclick="));
         assert!(!html.contains("javascript:"));
+    }
+
+    #[test]
+    fn readability_extracts_main_content_and_ammonia_sanitizes_it() {
+        let page = r#"<html><head><title>Story</title></head><body>
+            <nav class="navigation">Navigation and ads</nav><main><h1>Story</h1><p>Important text with enough words to identify the main article content clearly.</p>
+            <script>alert(1)</script><a href="javascript:bad()">safe label</a></main>
+        </body></html>"#;
+        let content = extract_page(page, "https://example.org/story").expect("extract");
+        assert!(content.contains("Important text"));
+        assert!(!content.contains("Navigation and ads"));
+        assert!(!content.contains("<script"));
+        assert!(!content.contains("javascript:"));
     }
 
     #[test]

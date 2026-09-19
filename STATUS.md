@@ -15,7 +15,9 @@
 - Feed failures now use stable feed-derived jitter with bounded 15-minute/1-hour/4-hour/12-hour/24-hour backoff; pruning performs capped incremental freelist vacuum and exposes physical database byte measurement.
 - Added headless `init-fixture-db` and `device-probe --cache DIR` commands, expanded CLI/retention tests, expanded ARM smoke coverage, and `docs/MANUAL-VALIDATION.md` for the remaining physical checks.
 - Added disposable refresh overlap locks, bounded `Retry-After` handling for HTTP 429/503 responses, refresh-run pruning to the newest 20 rows, feed enable/disable CLI/UI controls, physical database-size maintenance, and additional HTML event-handler/JavaScript URL sanitization tests.
-- Validation passed: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (33 tests), `luajit -b koreader-plugin/main.lua /tmp/rssreader-main.luac`, `make test-arm` (cross-build plus QEMU doctor/SQLite/materialization/fixture/probe smoke), and `git diff --check`.
+- Webpage fallback now uses `dom_smoothie` Readability followed by an explicit `ammonia` semantic HTML allowlist; the extraction fixture covers boilerplate removal and unsafe URL/script stripping.
+- Validation passed: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (34 tests), `luajit -b koreader-plugin/main.lua /tmp/rssreader-main.luac`, `make test-arm` (cross-build plus QEMU doctor/SQLite/materialization/fixture/probe smoke), and `git diff --check`.
+- Full extraction validation passed: `cargo test --workspace` (34 tests), Clippy, and `make test-arm`; the ARM release binary is 5,086,716 bytes (about 1.30 MB larger than the prior 3,791,876-byte build due to HTML parser/sanitizer dependencies).
 
 ## Important discoveries
 
@@ -35,7 +37,7 @@ Continue Milestones 4–7 in bounded slices: persisted scheduler state, validato
 
 - `NEEDS EXPERIMENT`: restart KOReader and use the deployed plugin's “Initialize and query SQLite”, feed UI, and offline fixture/article actions; record SQLite API results, Base64 JPEG/PNG rendering, reader viewport, journal locking, and KOReader cache artifacts.
 - `NEEDS EXPERIMENT`: wake hook, Wi-Fi readiness, suspend interaction, useful execution window, and battery impact.
-- Extraction currently uses bounded article/body selection rather than the full Readability/ammonia pipeline from PLAN.md; feed-specific selectors are not implemented.
+- Feed-specific content/remove selectors, full corpus benchmarking, and kill-at-each-boundary interruption tests remain unimplemented.
 
 ## Next task
 

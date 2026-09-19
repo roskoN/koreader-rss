@@ -243,9 +243,9 @@ fn insert_entry(
     let mut source_kind = 1;
     let mut source = entry.clone();
     if source.content.as_deref().is_none() && source.url.is_some() {
-        let (_effective, page) = client.fetch_page(source.url.as_deref().unwrap())?;
+        let (effective, page) = client.fetch_page(source.url.as_deref().unwrap())?;
         let body = String::from_utf8(page).map_err(|_| Error::message("page is not UTF-8"))?;
-        source.content = Some(extract_body(&body));
+        source.content = Some(article::extract_page(&body, &effective)?);
         source_kind = 2;
     }
     let html = article::wrap(&source)?;
@@ -277,6 +277,7 @@ fn insert_entry(
     Ok(changed)
 }
 
+#[cfg(test)]
 fn extract_body(html: &str) -> String {
     let lower = html.to_ascii_lowercase();
     if let (Some(start), Some(end)) = (lower.find("<article"), lower.rfind("</article>")) {

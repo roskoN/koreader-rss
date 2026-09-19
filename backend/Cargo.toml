@@ -11,6 +11,8 @@ name = "rss-backend"
 path = "src/main.rs"
 
 [dependencies]
+ammonia = "4.1.4"
+dom_smoothie = "0.18.1"
 rusqlite = { version = "0.40", features = ["bundled"] }
 ureq = { version = "=3.2.1", default-features = true }
 base64 = "0.22"
