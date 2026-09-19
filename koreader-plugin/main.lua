@@ -224,14 +224,28 @@ end
 
 function RSSReader:addFeedDialog()
     local dialog
+    local function submit()
+        local url = trim(dialog:getInputText())
+        if url == "" or url == "https://" then
+            show(_("Enter a feed URL."))
+            return
+        end
+        UIManager:close(dialog)
+        self:runBackend({ self.backend, "--db", self.database, "feed", "add", url },
+            _("Adding feed…"), function() show(_("Feed added.")) end)
+    end
     dialog = InputDialog:new{
         title = _("Add feed URL"), input = "https://",
-        buttons = {{ text = _("Add"), callback = function()
-            local url = trim(dialog:getInputText())
-            if url == "" then return end
-            self:runBackend({ self.backend, "--db", self.database, "feed", "add", url },
-                _("Adding feed…"), function() show(_("Feed added.")) end)
-        end }},
+        buttons = {{
+            {
+                text = _("Cancel"), id = "close",
+                callback = function() UIManager:close(dialog) end,
+            },
+            {
+                text = _("Add"), is_enter_default = true,
+                callback = submit,
+            },
+        }},
     }
     UIManager:show(dialog)
 end
