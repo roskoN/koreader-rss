@@ -92,6 +92,7 @@ function RSSReader:showUnread()
         title = string.format(_("Unread articles (%d)"), #result),
         item_table = result,
         covers_fullscreen = true,
+        multilines_forced = true,
         is_borderless = true,
         is_popout = false,
         title_bar_fm_style = true,
@@ -143,6 +144,7 @@ function RSSReader:showAllArticles(feed_id, title, offset)
     if #result == 0 then show(_("No articles.")); return end
     local menu = Menu:new{
         title = title or _("All articles"), item_table = result, covers_fullscreen = true,
+        multilines_forced = true,
         onMenuSelect = function(_, item)
             if item.next_offset then
                 UIManager:close(menu)
