@@ -45,6 +45,8 @@ case "$mode" in
             scp "$file" "$host:$remote_plugin/feeds/$name.new"
             ssh "$host" "mv '$remote_plugin/feeds/$name.new' '$remote_plugin/feeds/$name'"
         done
+        scp scripts/kindle-refresh-job.sh "$host:$remote_plugin/refresh-job.sh.new"
+        ssh "$host" "chmod 755 '$remote_plugin/refresh-job.sh.new' && mv '$remote_plugin/refresh-job.sh.new' '$remote_plugin/refresh-job.sh'"
         ;;
     *)
         echo "usage: $0 all|backend|plugin" >&2

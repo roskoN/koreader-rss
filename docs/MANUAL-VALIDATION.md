@@ -221,6 +221,13 @@ or suspend/battery behavior; retain those observations in the log above.
   and wake/suspend behavior remain **NEEDS EXPERIMENT** (§1, §6, §10).
 - Wake hook, Wi-Fi readiness, suspend interaction, execution window, battery
   impact remain **NEEDS EXPERIMENT** (§10).
-- Extraction still uses bounded article/body selection, not the full
-  Readability/ammonia pipeline from PLAN.md; feed-specific selectors not yet
-  implemented (PLAN §G).
+
+## 14. Unattended refresh job
+
+The deployed plugin contains `refresh-job.sh`. It is a one-shot, bounded
+entrypoint for a verified Kindle wake/powerd hook. It waits up to one minute
+for HTTPS readiness, invokes the backend with `--reason wake --budget 60`,
+rotates a 256 KiB log, and exits without changing power-management state. It
+does not install a daemon or schedule itself. Before wiring it to a firmware
+wake mechanism, verify that the hook wakes Wi-Fi, permits the bounded process
+to finish, and restores normal suspend behavior.
