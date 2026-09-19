@@ -278,6 +278,15 @@ impl Store {
     }
 
     pub fn add_feed(&mut self, url: &str, now: i64) -> Result<i64, Error> {
+        self.add_feed_with_title(url, None, now)
+    }
+
+    pub fn add_feed_with_title(
+        &mut self,
+        url: &str,
+        title: Option<&str>,
+        now: i64,
+    ) -> Result<i64, Error> {
         if !(url.starts_with("http://") || url.starts_with("https://")) {
             return Err(Error::message("feed URL must use http:// or https://"));
         }
@@ -290,9 +299,15 @@ impl Store {
             |row| row.get(0),
         )?;
         transaction.execute(
-            "INSERT OR IGNORE INTO feeds(source_url,schedule_order,created_at) VALUES (?1,?2,?3)",
-            params![url, schedule_order, now],
+            "INSERT OR IGNORE INTO feeds(source_url,title,schedule_order,created_at) VALUES (?1,?2,?3,?4)",
+            params![url, title, schedule_order, now],
         )?;
+        if let Some(title) = title {
+            transaction.execute(
+                "UPDATE feeds SET title=?2 WHERE source_url=?1 AND (title IS NULL OR title='')",
+                params![url, title],
+            )?;
+        }
         let id = transaction.query_row(
             "SELECT id FROM feeds WHERE source_url=?1",
             params![url],

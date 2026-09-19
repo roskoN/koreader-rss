@@ -256,8 +256,9 @@ function RSSReader:addFeedDialog()
         end
         UIManager:close(dialog)
         self:runBackend({ self.backend, "--db", self.database, "feed", "check", url },
-            _("Checking feed…"), function()
-                self:runBackend({ self.backend, "--db", self.database, "feed", "add", url },
+            _("Checking feed…"), function(output)
+                local title = output:match("title=(.*)$") or ""
+                self:runBackend({ self.backend, "--db", self.database, "feed", "add", url, title },
                     _("Adding feed…"), function() show(_("Feed added.")) end)
             end)
     end

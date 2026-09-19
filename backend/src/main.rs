@@ -140,7 +140,20 @@ fn import_opml_dir(store: &mut store::Store, directory: &std::path::Path) -> Res
         let xml = std::fs::read_to_string(&path)?;
         for url in opml_urls(&xml) {
             if url.starts_with("https://") || url.starts_with("http://") {
-                store.add_feed(&url, unix_now())?;
+                let title = http::HttpClient::new()
+                    .fetch_feed(http::FeedRequest {
+                        url: &url,
+                        etag: None,
+                        last_modified: None,
+                    })
+                    .ok()
+                    .and_then(|response| match response {
+                        http::FeedResponse::Body { bytes, .. } => feed::parse_feed(&bytes)
+                            .ok()
+                            .and_then(|parsed| parsed.title),
+                        http::FeedResponse::NotModified { .. } => None,
+                    });
+                store.add_feed_with_title(&url, title.as_deref(), unix_now())?;
                 imported += 1;
             }
         }
@@ -156,9 +169,14 @@ fn run(arguments: &[String]) -> Result<(), Error> {
         let mut store = store::Store::open(&db)?;
         match command {
             Some("feed")
-                if arguments.get(3).map(String::as_str) == Some("add") && arguments.len() == 5 =>
+                if arguments.get(3).map(String::as_str) == Some("add")
+                    && (arguments.len() == 5 || arguments.len() == 6) =>
             {
-                let id = store.add_feed(&arguments[4], unix_now())?;
+                let title = arguments
+                    .get(5)
+                    .filter(|title| !title.is_empty())
+                    .map(String::as_str);
+                let id = store.add_feed_with_title(&arguments[4], title, unix_now())?;
                 println!("{id}");
             }
             Some("feed")
@@ -466,8 +484,18 @@ mod tests {
             "feed".into(),
             "add".into(),
             "https://example.org/feed".into(),
+            "Example title".into(),
         ])
         .expect("add feed");
+        let verify_store = store::Store::open(&db).expect("open verification store");
+        assert_eq!(
+            verify_store
+                .feed(Some(1))
+                .expect("feed lookup")
+                .expect("feed")
+                .title,
+            Some("Example title".to_owned())
+        );
         run(&["--db".into(), db_arg.clone(), "feed".into(), "list".into()]).expect("list feeds");
         run(&[
             "--db".into(),
