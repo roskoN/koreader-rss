@@ -160,6 +160,25 @@ fn escape(value: &str) -> String {
         .replace('\'', "&#39;")
 }
 
+pub fn format_timestamp(timestamp: i64) -> String {
+    let days = timestamp.div_euclid(86_400);
+    let seconds = timestamp.rem_euclid(86_400);
+    let z = days + 719_468;
+    let era = (if z >= 0 { z } else { z - 146_096 }).div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096).div_euclid(365);
+    let year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2).div_euclid(153);
+    let day = doy - (153 * mp + 2).div_euclid(5) + 1;
+    let month = mp + if mp < 10 { 3 } else { -9 };
+    let year = year + if month <= 2 { 1 } else { 0 };
+    let hour = seconds / 3_600;
+    let minute = (seconds % 3_600) / 60;
+    let second = seconds % 60;
+    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02} UTC")
+}
+
 /// Wrap an embedded feed body (or summary) in a complete HTML5 document.
 pub fn wrap(entry: &ParsedEntry) -> Result<String, Error> {
     let title = entry
@@ -181,7 +200,7 @@ pub fn wrap(entry: &ParsedEntry) -> Result<String, Error> {
     let date = entry
         .published_at
         .or(entry.updated_at)
-        .map(|timestamp| timestamp.to_string())
+        .map(format_timestamp)
         .unwrap_or_default();
     let metadata = match (byline.is_empty(), date.is_empty()) {
         (true, true) => String::new(),
@@ -440,6 +459,12 @@ mod tests {
         assert!(html.contains("<p>Hello</p>"));
         assert!(html.contains("A &lt;title&gt;"));
         assert!(!compress(&html).expect("compress").is_empty());
+    }
+
+    #[test]
+    fn formats_feed_timestamps_as_utc() {
+        assert_eq!(format_timestamp(0), "1970-01-01 00:00:00 UTC");
+        assert_eq!(format_timestamp(1_700_000_000), "2023-11-14 22:13:20 UTC");
     }
 
     #[test]

@@ -161,7 +161,16 @@ function RSSReader:showAllArticles(feed_id, title, offset)
 end
 
 function RSSReader:showStatus()
-    self:runBackend({ self.backend, "--db", self.database, "status" }, _("Loading refresh status…"), show)
+    self:runBackend({ self.backend, "--db", self.database, "status" }, _("Loading refresh status…"), function(output)
+        output = output:gsub("started_at=(%-?%d+)", function(value)
+            return "started_at=" .. os.date("!%Y-%m-%d %H:%M:%S UTC", tonumber(value))
+        end)
+        output = output:gsub("finished_at=(%-?%d+)", function(value)
+            local timestamp = tonumber(value)
+            return "finished_at=" .. (timestamp == 0 and _("not finished") or os.date("!%Y-%m-%d %H:%M:%S UTC", timestamp))
+        end)
+        show(output)
+    end)
 end
 
 function RSSReader:refreshNow()
