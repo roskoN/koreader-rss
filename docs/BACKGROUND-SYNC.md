@@ -75,6 +75,9 @@ The experiment must be repeated across several cycles before the behavior is
 classified as `VERIFIED`. Host and QEMU results cannot establish Kindle power,
 Wi-Fi, or battery behavior.
 
+The exact command-by-command procedure is in
+[`docs/WAKE-EXPERIMENT.md`](WAKE-EXPERIMENT.md).
+
 ## Intended final integration
 
 Once a wake mechanism is verified, it should invoke only the one-shot wrapper:
