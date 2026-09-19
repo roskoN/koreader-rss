@@ -93,6 +93,7 @@ function RSSReader:showUnread()
         item_table = result,
         covers_fullscreen = true,
         multilines_forced = true,
+        items_max_lines = 2,
         is_borderless = true,
         is_popout = false,
         title_bar_fm_style = true,
@@ -145,6 +146,7 @@ function RSSReader:showAllArticles(feed_id, title, offset)
     local menu = Menu:new{
         title = title or _("All articles"), item_table = result, covers_fullscreen = true,
         multilines_forced = true,
+        items_max_lines = 2,
         onMenuSelect = function(_, item)
             if item.next_offset then
                 UIManager:close(menu)
