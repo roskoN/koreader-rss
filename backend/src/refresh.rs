@@ -1,6 +1,9 @@
 //! Bounded synchronous feed refresh vertical slice.
 
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
+use std::sync::{mpsc, Arc, Mutex};
+use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::article;
@@ -8,6 +11,8 @@ use crate::feed::{parse_feed, ParsedEntry};
 use crate::http::{FeedRequest, FeedResponse, HttpClient};
 use crate::store::{ArticleInsert, Store};
 use crate::Error;
+
+const ARTICLE_DOWNLOAD_THREADS: usize = 4;
 
 fn now() -> i64 {
     SystemTime::now()
@@ -155,19 +160,25 @@ fn run_one(store: &mut Store, feed_id: i64, budget_s: u64) -> Result<(usize, usi
             };
             let mut inserted = 0;
             let mut failures = 0;
-            let client = HttpClient::new();
-            for entry in &parsed.entries {
-                match insert_entry(store, &feed, entry, fetched_at, &client) {
-                    Ok(true) => inserted += 1,
-                    Ok(false) => {}
+            for result in download_entries(&feed, parsed.entries) {
+                match result.prepared {
+                    Ok(prepared) => {
+                        if let Some(error) = result.fallback_error {
+                            store.record_entry_failure(
+                                feed.id,
+                                &result.entry,
+                                fetched_at,
+                                &error,
+                            )?;
+                        }
+                        if insert_prepared_entry(store, &feed, &result.entry, fetched_at, prepared)?
+                        {
+                            inserted += 1;
+                        }
+                    }
                     Err(error) => {
                         failures += 1;
-                        store.record_entry_failure(
-                            feed.id,
-                            entry,
-                            fetched_at,
-                            &error.to_string(),
-                        )?;
+                        store.record_entry_failure(feed.id, &result.entry, fetched_at, &error)?;
                     }
                 }
             }
@@ -242,15 +253,66 @@ pub fn run_all_with_reason(
     Ok((inserted, failures))
 }
 
-fn insert_entry(
-    store: &mut Store,
+struct PreparedEntry {
+    source: ParsedEntry,
+    source_kind: i64,
+    html: String,
+    blob: Vec<u8>,
+}
+
+struct DownloadResult {
+    entry: ParsedEntry,
+    prepared: Result<PreparedEntry, String>,
+    fallback_error: Option<String>,
+}
+
+fn download_entries(
     feed: &crate::store::FeedRow,
-    entry: &ParsedEntry,
-    fetched_at: i64,
+    entries: Vec<ParsedEntry>,
+) -> Vec<DownloadResult> {
+    if entries.is_empty() {
+        return Vec::new();
+    }
+    let queue = Arc::new(Mutex::new(
+        entries.into_iter().enumerate().collect::<VecDeque<_>>(),
+    ));
+    let (sender, receiver) = mpsc::channel();
+    let worker_count = ARTICLE_DOWNLOAD_THREADS.min(queue.lock().expect("queue lock").len());
+    let mut workers = Vec::with_capacity(worker_count);
+    for _ in 0..worker_count {
+        let queue = Arc::clone(&queue);
+        let sender = sender.clone();
+        let feed = feed.clone();
+        workers.push(thread::spawn(move || {
+            let client = HttpClient::new();
+            loop {
+                let Some((index, entry)) = queue.lock().expect("queue lock").pop_front() else {
+                    break;
+                };
+                let result = prepare_entry(&feed, entry.clone(), &client);
+                sender.send((index, result)).expect("refresh receiver");
+            }
+        }));
+    }
+    drop(sender);
+    let mut results = Vec::with_capacity(worker_count);
+    for (index, result) in receiver {
+        results.push((index, result));
+    }
+    for worker in workers {
+        worker.join().expect("article download worker");
+    }
+    results.sort_by_key(|(index, _)| *index);
+    results.into_iter().map(|(_, result)| result).collect()
+}
+
+fn prepare_entry(
+    feed: &crate::store::FeedRow,
+    mut source: ParsedEntry,
     client: &HttpClient,
-) -> Result<bool, Error> {
+) -> DownloadResult {
     let mut source_kind = 1;
-    let mut source = entry.clone();
+    let mut fallback_error = None;
     if let Some(url) = source.url.as_deref() {
         // Prefer the canonical article page over RSS summaries/content. Keep
         // usable RSS content if the page is unavailable, so one paywalled or
@@ -275,23 +337,71 @@ fn insert_entry(
                     .as_deref()
                     .is_some_and(|content| !content.trim().is_empty()) =>
             {
-                store.record_entry_failure(
-                    feed.id,
-                    entry,
-                    fetched_at,
-                    &format!("full article unavailable; used RSS content: {error}"),
-                )?;
+                fallback_error = Some(format!(
+                    "full article unavailable; used RSS content: {error}"
+                ));
             }
-            Err(error) => return Err(error),
+            Err(error) => {
+                return DownloadResult {
+                    entry: source,
+                    prepared: Err(error.to_string()),
+                    fallback_error: None,
+                };
+            }
         }
     } else if source.content.as_deref().is_none() {
-        return Err(Error::message(
-            "RSS entry has neither content nor article URL",
-        ));
+        return DownloadResult {
+            entry: source,
+            prepared: Err("RSS entry has neither content nor article URL".to_owned()),
+            fallback_error: None,
+        };
     }
-    let html = article::wrap(&source)?;
+    let html = match article::wrap(&source) {
+        Ok(html) => html,
+        Err(error) => {
+            return DownloadResult {
+                entry: source,
+                prepared: Err(error.to_string()),
+                fallback_error,
+            };
+        }
+    };
     let html = article::embed_images(&html, source.url.as_deref(), client);
-    let blob = article::compress(&html)?;
+    let blob = match article::compress(&html) {
+        Ok(blob) => blob,
+        Err(error) => {
+            return DownloadResult {
+                entry: source,
+                prepared: Err(error.to_string()),
+                fallback_error,
+            };
+        }
+    };
+    DownloadResult {
+        entry: source.clone(),
+        prepared: Ok(PreparedEntry {
+            source,
+            source_kind,
+            html,
+            blob,
+        }),
+        fallback_error,
+    }
+}
+
+fn insert_prepared_entry(
+    store: &mut Store,
+    feed: &crate::store::FeedRow,
+    entry: &ParsedEntry,
+    fetched_at: i64,
+    prepared: PreparedEntry,
+) -> Result<bool, Error> {
+    let PreparedEntry {
+        source,
+        source_kind,
+        html,
+        blob,
+    } = prepared;
     let changed = store.insert_article(&ArticleInsert {
         feed_id: feed.id,
         dedupe_key: &entry.dedupe_key,
@@ -313,7 +423,7 @@ fn insert_entry(
         content_blob: &blob,
     })?;
     if changed {
-        store.clear_entry_failure(feed.id, &source.dedupe_key)?;
+        store.clear_entry_failure(feed.id, &entry.dedupe_key)?;
     }
     Ok(changed)
 }

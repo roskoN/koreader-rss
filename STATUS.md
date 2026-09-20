@@ -17,6 +17,8 @@ Completed capabilities include:
   unread/read state, retention, physical-size maintenance, and cache bounds.
 - Fair persisted scheduling, refresh-run outcomes, status reporting, overlap
   locking, `Retry-After`, feed error reporting, and confirmed purge actions.
+- Article page and embedded-image downloads now use a bounded four-thread worker
+  pool per feed; SQLite writes remain serialized and deterministic.
 - KOReader RSS Reader menu with unread/all/per-feed views, paging, two-line
   entries, feed management, refresh/status actions, external-link actions, and
   OPML startup import.
@@ -33,6 +35,7 @@ Automated validation is passing:
 - ARMv7 cross-build and QEMU smoke tests.
 - Host interruption/cache validation and materialization benchmark.
 - Kindle SSH backend/device diagnostics.
+- Backend tests, formatting, and Clippy after the four-thread downloader change.
 
 The current ARM backend and KOReader plugin have been deployed to the verified
 Kindle at `/mnt/us/koreader/plugins/rssreader.koplugin/`.
@@ -71,3 +74,6 @@ before installing a persistent schedule.
    `docs/BACKGROUND-SYNC.md`.
 3. Implement selector settings, larger extraction benchmarks, and
    refresh-transaction kill tests if needed after device observations.
+
+The concurrent downloader change was host-validated only; deployment was not
+run.
