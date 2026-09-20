@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use flate2::{write::ZlibEncoder, Compression};
@@ -33,9 +34,10 @@ pub fn extract_page_with_selectors(
         || html.to_owned(),
         |selector| select_fragment(html, selector),
     );
-    let selected = remove_selector.map_or(selected.clone(), |selector| {
-        remove_fragment(&selected, selector)
-    });
+    let selected = match remove_selector {
+        Some(selector) => remove_fragment(&selected, selector),
+        None => selected,
+    };
     let mut readability =
         dom_smoothie::Readability::new(selected.as_str(), Some(document_url), None).map_err(
             |error| Error::message(format!("cannot initialize article extraction: {error}")),
@@ -43,68 +45,75 @@ pub fn extract_page_with_selectors(
     let article = readability
         .parse()
         .map_err(|error| Error::message(format!("article extraction failed: {error}")))?;
-    let tags = [
-        "abbr",
-        "article",
-        "b",
-        "blockquote",
-        "br",
-        "code",
-        "dd",
-        "div",
-        "dl",
-        "dt",
-        "em",
-        "figcaption",
-        "figure",
-        "h1",
-        "h2",
-        "h3",
-        "h4",
-        "h5",
-        "h6",
-        "hr",
-        "i",
-        "img",
-        "li",
-        "ol",
-        "p",
-        "pre",
-        "q",
-        "s",
-        "small",
-        "span",
-        "strong",
-        "sub",
-        "sup",
-        "table",
-        "tbody",
-        "td",
-        "tfoot",
-        "th",
-        "thead",
-        "tr",
-        "u",
-        "ul",
-    ]
-    .into_iter()
-    .collect::<HashSet<_>>();
-    let attrs = ["alt", "class", "height", "src", "title", "width"]
-        .into_iter()
-        .collect::<HashSet<_>>();
-    let schemes = ["http", "https", "mailto"]
-        .into_iter()
-        .collect::<HashSet<_>>();
-    let mut sanitizer = ammonia::Builder::default();
-    sanitizer
-        .tags(tags)
-        .generic_attributes(attrs)
-        .url_schemes(schemes);
-    let cleaned = sanitizer.clean(&article.content).to_string();
+    let cleaned = article_sanitizer().clean(&article.content).to_string();
     if cleaned.trim().is_empty() {
         return Err(Error::message("article extraction produced empty content"));
     }
     Ok(cleaned)
+}
+
+fn article_sanitizer() -> &'static ammonia::Builder<'static> {
+    static SANITIZER: OnceLock<ammonia::Builder<'static>> = OnceLock::new();
+    SANITIZER.get_or_init(|| {
+        let tags = [
+            "abbr",
+            "article",
+            "b",
+            "blockquote",
+            "br",
+            "code",
+            "dd",
+            "div",
+            "dl",
+            "dt",
+            "em",
+            "figcaption",
+            "figure",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "hr",
+            "i",
+            "img",
+            "li",
+            "ol",
+            "p",
+            "pre",
+            "q",
+            "s",
+            "small",
+            "span",
+            "strong",
+            "sub",
+            "sup",
+            "table",
+            "tbody",
+            "td",
+            "tfoot",
+            "th",
+            "thead",
+            "tr",
+            "u",
+            "ul",
+        ]
+        .into_iter()
+        .collect::<HashSet<_>>();
+        let attrs = ["alt", "class", "height", "src", "title", "width"]
+            .into_iter()
+            .collect::<HashSet<_>>();
+        let schemes = ["http", "https", "mailto"]
+            .into_iter()
+            .collect::<HashSet<_>>();
+        let mut sanitizer = ammonia::Builder::default();
+        sanitizer
+            .tags(tags)
+            .generic_attributes(attrs)
+            .url_schemes(schemes);
+        sanitizer
+    })
 }
 
 fn select_fragment(html: &str, selector: &str) -> String {
@@ -263,11 +272,11 @@ pub fn embed_images(
     client: &crate::http::HttpClient,
 ) -> String {
     let mut output = html.to_owned();
+    let base_url = base_url.and_then(|base| Url::parse(base).ok());
     let mut cursor = 0;
     let mut processed = 0;
     while processed < 12 {
-        let lower = output[cursor..].to_ascii_lowercase();
-        let Some(relative) = lower.find("<img") else {
+        let Some(relative) = find_ascii_case_insensitive(&output[cursor..], b"<img") else {
             break;
         };
         let start = cursor + relative;
@@ -276,7 +285,7 @@ pub fn embed_images(
         };
         let end = start + end_rel + 1;
         let tag = output[start..end].to_owned();
-        let Some(src_rel) = tag.to_ascii_lowercase().find("src=") else {
+        let Some(src_rel) = find_ascii_case_insensitive(&tag, b"src=") else {
             cursor = end;
             continue;
         };
@@ -297,7 +306,8 @@ pub fn embed_images(
         };
         let raw_url = &tag[from..to];
         let resolved = base_url
-            .and_then(|base| Url::parse(base).ok().and_then(|u| u.join(raw_url).ok()))
+            .as_ref()
+            .and_then(|base| base.join(raw_url).ok())
             .map(|u| u.to_string())
             .unwrap_or_else(|| raw_url.to_owned());
         if resolved.starts_with("http://") || resolved.starts_with("https://") {
@@ -312,6 +322,13 @@ pub fn embed_images(
         processed += 1;
     }
     output
+}
+
+fn find_ascii_case_insensitive(haystack: &str, needle: &[u8]) -> Option<usize> {
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .position(|window| window.eq_ignore_ascii_case(needle))
 }
 
 fn encode_image(bytes: &[u8]) -> Result<String, Error> {

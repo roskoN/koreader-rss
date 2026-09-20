@@ -254,9 +254,8 @@ pub fn run_all_with_reason(
 }
 
 struct PreparedEntry {
-    source: ParsedEntry,
     source_kind: i64,
-    html: String,
+    uncompressed_size: usize,
     blob: Vec<u8>,
 }
 
@@ -289,7 +288,7 @@ fn download_entries(
                 let Some((index, entry)) = queue.lock().expect("queue lock").pop_front() else {
                     break;
                 };
-                let result = prepare_entry(&feed, entry.clone(), &client);
+                let result = prepare_entry(&feed, entry, &client);
                 sender.send((index, result)).expect("refresh receiver");
             }
         }));
@@ -377,12 +376,14 @@ fn prepare_entry(
             };
         }
     };
+    let uncompressed_size = html.len();
+    source.content = None;
+    source.summary = None;
     DownloadResult {
-        entry: source.clone(),
+        entry: source,
         prepared: Ok(PreparedEntry {
-            source,
             source_kind,
-            html,
+            uncompressed_size,
             blob,
         }),
         fallback_error,
@@ -397,20 +398,19 @@ fn insert_prepared_entry(
     prepared: PreparedEntry,
 ) -> Result<bool, Error> {
     let PreparedEntry {
-        source,
         source_kind,
-        html,
+        uncompressed_size,
         blob,
     } = prepared;
     let changed = store.insert_article(&ArticleInsert {
         feed_id: feed.id,
         dedupe_key: &entry.dedupe_key,
-        guid: (!source.id.is_empty()).then_some(source.id.as_str()),
-        url: source.url.as_deref(),
-        title: source.title.as_deref().unwrap_or("(untitled)"),
-        author: source.authors.first().map(String::as_str),
-        published_at: source.published_at,
-        sort_at: source
+        guid: (!entry.id.is_empty()).then_some(entry.id.as_str()),
+        url: entry.url.as_deref(),
+        title: entry.title.as_deref().unwrap_or("(untitled)"),
+        author: entry.authors.first().map(String::as_str),
+        published_at: entry.published_at,
+        sort_at: entry
             .published_at
             .or(entry.updated_at)
             .unwrap_or(fetched_at),
@@ -419,7 +419,7 @@ fn insert_prepared_entry(
         compression_codec: article::COMPRESSION_CODEC,
         content_format: article::CONTENT_FORMAT,
         storage_version: article::STORAGE_VERSION,
-        uncompressed_size: html.len(),
+        uncompressed_size,
         content_blob: &blob,
     })?;
     if changed {

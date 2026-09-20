@@ -312,24 +312,25 @@ fn run(arguments: &[String]) -> Result<(), Error> {
             }
             Some("device-probe") if arguments.len() == 5 && arguments[3] == "--cache" => {
                 let cache = PathBuf::from(&arguments[4]);
-                let cache_files = std::fs::read_dir(&cache)
+                let (cache_files, cache_bytes) = std::fs::read_dir(&cache)
                     .ok()
                     .into_iter()
                     .flatten()
                     .filter_map(Result::ok)
-                    .filter_map(|entry| entry.metadata().ok().map(|meta| (entry, meta)))
-                    .filter(|(entry, _)| {
+                    .filter(|entry| {
                         entry.path().extension().and_then(|ext| ext.to_str()) == Some("html")
                     })
-                    .filter(|(_, meta)| meta.is_file())
-                    .collect::<Vec<_>>();
-                let cache_bytes: u64 = cache_files.iter().map(|(_, meta)| meta.len()).sum();
+                    .filter_map(|entry| entry.metadata().ok())
+                    .filter(|meta| meta.is_file())
+                    .fold((0usize, 0u64), |(count, bytes), meta| {
+                        (count + 1, bytes + meta.len())
+                    });
                 println!("schema_version={}", store.schema_version()?);
                 println!("journal_mode={}", store.journal_mode()?);
                 println!("database_bytes={}", store.database_bytes()?);
                 println!("freelist_pages={}", store.freelist_pages()?);
                 println!("article_count={}", store.article_count()?);
-                println!("cache_files={}", cache_files.len());
+                println!("cache_files={cache_files}");
                 println!("cache_bytes={cache_bytes}");
             }
             Some("status") if arguments.len() == 3 => {

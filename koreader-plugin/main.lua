@@ -25,6 +25,33 @@ local function trim(text)
     return (text or ""):match("^%s*(.-)%s*$")
 end
 
+local function withDatabase(path, callback)
+    local connection
+    local ok, result = pcall(function()
+        connection = require("lua-ljsqlite3/init").open(path)
+        return callback(connection)
+    end)
+    if connection then pcall(connection.close, connection) end
+    return ok, result
+end
+
+local function queryRows(path, sql, map)
+    return withDatabase(path, function(connection)
+        local statement = connection:prepare(sql)
+        local items = {}
+        local ok, err = pcall(function()
+            while true do
+                local row = statement:step()
+                if not row then break end
+                items[#items + 1] = map(row)
+            end
+        end)
+        pcall(statement.close, statement)
+        if not ok then error(err) end
+        return items
+    end)
+end
+
 function RSSReader:init()
     local root = DataStorage:getDataDir()
     self.backend = self.path .. "/bin/rss-backend"
@@ -46,38 +73,25 @@ function RSSReader:importOpmlFeeds()
 end
 
 function RSSReader:showUnread()
-    local connection
-    local statement
-    local ok, result = pcall(function()
-        local SQ3 = require("lua-ljsqlite3/init")
-        connection = SQ3.open(self.database)
-        statement = connection:prepare([[
+    local ok, result = queryRows(self.database, [[
             SELECT a.id, a.title, f.title, a.sort_at, a.url
             FROM articles a JOIN feeds f ON f.id = a.feed_id
             WHERE a.is_read = 0
             ORDER BY a.sort_at DESC, a.id DESC
             LIMIT 100
-        ]])
-        local items = {}
-        while true do
-            local row = statement:step()
-            if not row then break end
-            local published = tonumber(row[4])
-            table.insert(items, {
-                article_id = tonumber(row[1]),
-                text = tostring(row[2]) .. "\n" .. string.format(
-                    "%s · %s",
-                    tostring(row[3] or _("Unknown feed")),
-                    published and os.date("%Y-%m-%d", published) or _("Unknown date")
-                ),
-                multilines_forced = true,
-                url = row[5],
-            })
-        end
-        return items
+        ]], function(row)
+        local published = tonumber(row[4])
+        return {
+            article_id = tonumber(row[1]),
+            text = tostring(row[2]) .. "\n" .. string.format(
+                "%s · %s",
+                tostring(row[3] or _("Unknown feed")),
+                published and os.date("%Y-%m-%d", published) or _("Unknown date")
+            ),
+            multilines_forced = true,
+            url = row[5],
+        }
     end)
-    if statement then pcall(statement.close, statement) end
-    if connection then pcall(connection.close, connection) end
     if not ok then
         show(_("Cannot read unread articles:") .. "\n" .. tostring(result))
         return
@@ -114,35 +128,22 @@ end
 
 function RSSReader:showAllArticles(feed_id, title, offset)
     offset = offset or 0
-    local connection
-    local statement
-    local ok, result = pcall(function()
-        local SQ3 = require("lua-ljsqlite3/init")
-        connection = SQ3.open(self.database)
-        local sql = "SELECT a.id,a.title,COALESCE(f.title,f.source_url),a.sort_at,a.url FROM articles a JOIN feeds f ON f.id=a.feed_id"
-        if feed_id then sql = sql .. " WHERE a.feed_id = " .. tostring(feed_id) end
-        sql = sql .. " ORDER BY a.sort_at DESC,a.id DESC LIMIT 100 OFFSET " .. tostring(offset)
-        statement = connection:prepare(sql)
-        local items = {}
-        while true do
-            local row = statement:step()
-            if not row then break end
-            table.insert(items, {
-                article_id = tonumber(row[1]),
-                text = tostring(row[2]) .. "\n" .. string.format("%s · %s", tostring(row[3]), os.date("%Y-%m-%d", tonumber(row[4]))),
-                multilines_forced = true,
-                url = row[5],
-            })
-        end
-        if #items == 100 then
-            table.insert(items, { text = _("Next page →"), next_offset = offset + 100 })
-        end
-        return items
+    local sql = "SELECT a.id,a.title,COALESCE(f.title,f.source_url),a.sort_at,a.url FROM articles a JOIN feeds f ON f.id=a.feed_id"
+    if feed_id then sql = sql .. " WHERE a.feed_id = " .. tostring(feed_id) end
+    sql = sql .. " ORDER BY a.sort_at DESC,a.id DESC LIMIT 100 OFFSET " .. tostring(offset)
+    local ok, result = queryRows(self.database, sql, function(row)
+        return {
+            article_id = tonumber(row[1]),
+            text = tostring(row[2]) .. "\n" .. string.format("%s · %s", tostring(row[3]), os.date("%Y-%m-%d", tonumber(row[4]))),
+            multilines_forced = true,
+            url = row[5],
+        }
     end)
-    if statement then pcall(statement.close, statement) end
-    if connection then pcall(connection.close, connection) end
     if not ok then show(tostring(result)); return end
     if #result == 0 then show(_("No articles.")); return end
+    if #result == 100 then
+        result[#result + 1] = { text = _("Next page →"), next_offset = offset + 100 }
+    end
     local menu = Menu:new{
         title = title or _("All articles"), item_table = result, covers_fullscreen = true,
         multilines_forced = true,
@@ -358,10 +359,7 @@ function RSSReader:runHttpsProbe()
 end
 
 function RSSReader:queryProbeDatabase()
-    local connection
-    local ok, result = pcall(function()
-        local SQ3 = require("lua-ljsqlite3/init")
-        connection = SQ3.open(self.probe_database)
+    local ok, result = withDatabase(self.probe_database, function(connection)
         local sqlite_version = connection:rowexec("SELECT sqlite_version()")
         local value = connection:rowexec("SELECT value FROM meta WHERE key='probe'")
         local journal = connection:rowexec("PRAGMA journal_mode")
@@ -370,9 +368,6 @@ function RSSReader:queryProbeDatabase()
             tostring(sqlite_version), tostring(value), tostring(journal), self.probe_database
         )
     end)
-    if connection then
-        pcall(connection.close, connection)
-    end
     if ok then
         show(result)
     else

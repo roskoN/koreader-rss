@@ -293,19 +293,21 @@ fn hash_fallback(entry: &ParsedEntry) -> String {
     }
     hasher.update(b"\x00");
     if let Some(content) = &entry.content {
-        let prefix = content
-            .chars()
-            .take(MAX_ENTRY_CONTENT_PREFIX)
-            .collect::<String>();
-        hasher.update(prefix.as_bytes());
+        let end = content
+            .char_indices()
+            .nth(MAX_ENTRY_CONTENT_PREFIX)
+            .map_or(content.len(), |(index, _)| index);
+        hasher.update(&content.as_bytes()[..end]);
     } else {
         hasher.update(b"\x00");
     }
-    hasher
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(64);
+    for byte in hasher.finalize() {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
 }
 
 impl From<feed_rs::parser::ParseFeedError> for Error {
