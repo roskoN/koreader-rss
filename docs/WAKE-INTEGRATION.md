@@ -1,12 +1,12 @@
 # KOReader RSS Wake Integration
 
-The optional wake integration refreshes feeds after the Kindle completes a
-real suspend/resume cycle. It does not schedule a wake, replace Kindle power
-management, or require KOReader to be running.
+The optional wake integration schedules an approximately four-hour RTC wake,
+refreshes due feeds, and lets powerd suspend normally again. It does not
+replace Kindle power management or require KOReader to be running.
 
 ```text
 Lua plugin  -> manages the optional service and reports status
-Upstart     -> waits for powerd's genuine wake event
+Upstart     -> arms powerd RTC wakeups during readyToSuspend 1 and handles resume
 Rust        -> applies refresh policy and performs bounded network/database work
 SQLite      -> stores refresh history and article state
 ```
@@ -18,7 +18,8 @@ the tested Kindle and require acceptance testing on other firmware.
 
 ## Files and lifecycle
 
-The plugin ships `wake.lua` and `resources/koreader-rss-wake.conf`. Enabling
+The plugin ships `wake.lua`, `resources/koreader-rss-wake.conf`, and the
+supervisor template. Enabling
 **Refresh after Kindle wakes** validates prerequisites, temporarily makes the
 system root writable, installs the reviewed Upstart configuration, restores
 read-only state, starts the service, and verifies its status. Installation is
@@ -26,13 +27,12 @@ idempotent and includes a template version marker. Disabling the option stops
 the service and removes the configuration using the same read-only restoration
 guard. The plugin never installs the service merely because it is present.
 
-The Upstart job is intentionally policy-free:
+The Upstart job is a small event supervisor:
 
 ```text
-wait for wakeupFromSuspend
-run rss-backend refresh --budget 30 --reason wake
-exit
-Upstart respawns and waits for the next wake
+readyToSuspend 1 -> rss-backend schedule -> lipc-set-prop rtcWakeup N
+wakeupFromSuspend -> temporary deferSuspend -> bounded rss-backend refresh
+The event listeners are recreated if lipc-wait-event exits.
 ```
 
 The backend and database paths are safely substituted when the service is
@@ -41,11 +41,13 @@ power-state polling is introduced.
 
 ## Backend wake policy
 
-`refresh --reason wake` uses the same implementation as manual refresh, with
+`schedule` persists an absolute `next_refresh_at` in SQLite. Each suspend
+cycle calculates the remaining time rather than resetting the interval. The
+`refresh --reason wake` path uses the same implementation as manual refresh, with
 wake-specific safeguards:
 
 - the refresh lock rejects overlap immediately;
-- a recent successful refresh causes an immediate, recorded skip;
+- a not-yet-due wake exits cheaply;
 - network and HTTP work are bounded by the supplied budget;
 - feed failures use persisted retry/backoff state;
 - successful and skipped attempts remain visible through `status`.
@@ -59,8 +61,8 @@ Typical invocation:
 ```
 
 Refresh metadata records trigger, duration, feeds checked, new articles,
-outcome, and error/skip reason. SQLite remains authoritative; no permanent
-wake log is required for normal operation.
+outcome, and error/skip reason. SQLite remains authoritative; the supervisor
+keeps a bounded diagnostic log beside the database.
 
 ## Diagnostics and safety
 
@@ -76,9 +78,11 @@ status koreader-rss-wake
 
 Unsupported devices leave the system unchanged. Installation errors attempt to
 restore the root filesystem to read-only before reporting failure. The
-integration does not use `outOfScreenSaver`, poll power state, request an
-opportunistic wake, retry continuously, or wait indefinitely for Wi-Fi. RTC
-alarms are deliberately a separate future feature.
+integration does not use `outOfScreenSaver`, poll while suspended, request raw
+`/sys/class/rtc` alarms, retry continuously, or wait indefinitely for Wi-Fi.
+The temporary `deferSuspend` request is released on completion and by the
+supervisor trap; its exact suspend behavior remains `NEEDS EXPERIMENT` on the
+target firmware.
 
 ## Validation status
 

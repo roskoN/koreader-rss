@@ -353,6 +353,12 @@ fn run(arguments: &[String]) -> Result<(), Error> {
                     println!("run_id=none");
                 }
             }
+            Some("schedule") if arguments.len() == 3 => {
+                let now = unix_now();
+                let deadline = store.ensure_next_refresh_at(now)?;
+                println!("next_refresh_at={deadline}");
+                println!("seconds_until={}", deadline.saturating_sub(now).max(1));
+            }
             Some("refresh") => {
                 let feed_id = integer_argument(&arguments[3..], "--feed", 0)?;
                 let reason = match arguments.iter().position(|argument| argument == "--reason") {
@@ -377,28 +383,46 @@ fn run(arguments: &[String]) -> Result<(), Error> {
                         },
                     )?
                 };
-                let _lock = refresh::RefreshLock::acquire(&db)?;
-                if reason == 2 {
-                    if let Some(last) = store.last_successful_refresh_at()? {
-                        let age = unix_now().saturating_sub(last);
-                        let interval = store.refresh_interval_s()?.max(0);
-                        if age < interval {
-                            let run = store.begin_refresh_run(reason, budget, unix_now())?;
-                            store.finish_refresh_run(
-                                run,
-                                unix_now(),
-                                store::RUN_OUTCOME_SKIPPED,
-                                Some("minimum refresh interval has not elapsed"),
-                            )?;
-                            println!("skipped=recent_success age_s={age} interval_s={interval}");
-                            return Ok(());
+                let now = unix_now();
+                if reason == store::RUN_REASON_WAKE && !store.refresh_due(now)? {
+                    let deadline = store.next_refresh_at()?.unwrap_or(now);
+                    println!(
+                        "skipped=not_due seconds_until={}",
+                        deadline.saturating_sub(now).max(0)
+                    );
+                    return Ok(());
+                }
+                let _lock = match refresh::RefreshLock::acquire(&db) {
+                    Ok(lock) => lock,
+                    Err(Error::Message(message)) if reason == store::RUN_REASON_WAKE => {
+                        println!("skipped=refresh_in_progress message={message}");
+                        return Ok(());
+                    }
+                    Err(error) => return Err(error),
+                };
+                if feed_id == 0 {
+                    match refresh::run_all_with_reason(&mut store, budget, reason) {
+                        Ok((_, failures)) => {
+                            if reason == store::RUN_REASON_WAKE {
+                                let next = store.schedule_after_wake(unix_now(), failures == 0)?;
+                                println!("next_refresh_at={next}");
+                            }
+                        }
+                        Err(error) => {
+                            if reason == store::RUN_REASON_WAKE {
+                                let next = store.schedule_after_wake(unix_now(), false)?;
+                                println!("next_refresh_at={next}");
+                            }
+                            return Err(error);
                         }
                     }
-                }
-                if feed_id == 0 {
-                    let _ = refresh::run_all_with_reason(&mut store, budget, reason)?;
                 } else {
-                    let _ = refresh::run_with_reason(&mut store, feed_id as i64, budget, reason)?;
+                    let result =
+                        refresh::run_with_reason(&mut store, feed_id as i64, budget, reason)?;
+                    if reason == store::RUN_REASON_WAKE {
+                        let next = store.schedule_after_wake(unix_now(), result.1 == 0)?;
+                        println!("next_refresh_at={next}");
+                    }
                 }
             }
             Some("materialize")

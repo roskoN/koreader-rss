@@ -10,7 +10,7 @@ use crate::feed::ParsedEntry;
 use crate::Error;
 
 pub const APPLICATION_ID: i64 = 0x5253_5352; // "RSSR"
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -94,11 +94,11 @@ pub struct Store {
 }
 
 pub const RUN_REASON_MANUAL: i64 = 1;
+pub const RUN_REASON_WAKE: i64 = 2;
 pub const RUN_OUTCOME_SUCCESS: i64 = 1;
 pub const RUN_OUTCOME_PARTIAL: i64 = 2;
 pub const RUN_OUTCOME_INTERRUPTED: i64 = 3;
 pub const RUN_OUTCOME_FAILED: i64 = 4;
-pub const RUN_OUTCOME_SKIPPED: i64 = 5;
 
 fn backoff_delay(source_url: &str, failures: i64) -> i64 {
     let base = match failures {
@@ -138,7 +138,7 @@ impl Store {
     }
 
     fn migrate(&mut self) -> Result<(), Error> {
-        let version: i64 = self
+        let mut version: i64 = self
             .connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))?;
         if version > SCHEMA_VERSION {
@@ -158,13 +158,14 @@ impl Store {
                 "CREATE TABLE app_state (
                     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
                     scheduler_cursor INTEGER NOT NULL DEFAULT 0,
-                    last_maintenance_at INTEGER
+                    last_maintenance_at INTEGER,
+                    next_refresh_at INTEGER
                  );
                  INSERT INTO app_state(singleton) VALUES (1);
 
                  CREATE TABLE settings (
                     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-                    default_refresh_s INTEGER NOT NULL DEFAULT 21600,
+                     default_refresh_s INTEGER NOT NULL DEFAULT 14400,
                     retention_days INTEGER NOT NULL DEFAULT 90,
                     max_articles_per_feed INTEGER NOT NULL DEFAULT 500,
                     max_articles_total INTEGER NOT NULL DEFAULT 5000,
@@ -259,6 +260,7 @@ impl Store {
             transaction.pragma_update(None, "application_id", APPLICATION_ID)?;
             transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             transaction.commit()?;
+            version = SCHEMA_VERSION;
         }
         if version == 1 {
             let transaction = self
@@ -299,6 +301,50 @@ impl Store {
                  UPDATE settings SET max_db_bytes=536870912 WHERE singleton=1;
                 ",
             )?;
+            transaction.pragma_update(None, "user_version", 2)?;
+            transaction.commit()?;
+            version = 2;
+        }
+        if version < 3 {
+            let transaction = self
+                .connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let has_app_state = transaction
+                .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='app_state'")?
+                .exists([])?;
+            if has_app_state {
+                let has_column = transaction
+                    .prepare(
+                        "SELECT 1 FROM pragma_table_info('app_state') WHERE name='next_refresh_at'",
+                    )?
+                    .exists([])?;
+                if !has_column {
+                    transaction.execute_batch(
+                        "ALTER TABLE app_state ADD COLUMN next_refresh_at INTEGER;",
+                    )?;
+                }
+            } else {
+                transaction.execute_batch(
+                    "CREATE TABLE app_state (
+                        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                        scheduler_cursor INTEGER NOT NULL DEFAULT 0,
+                        last_maintenance_at INTEGER,
+                        next_refresh_at INTEGER
+                     );
+                     INSERT INTO app_state(singleton) VALUES (1);",
+                )?;
+            }
+            let has_refresh_setting = transaction
+                .prepare(
+                    "SELECT 1 FROM pragma_table_info('settings') WHERE name='default_refresh_s'",
+                )?
+                .exists([])?;
+            if has_refresh_setting {
+                transaction.execute(
+                    "UPDATE settings SET default_refresh_s=14400 WHERE singleton=1 AND default_refresh_s=21600",
+                    [],
+                )?;
+            }
             transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             transaction.commit()?;
         }
@@ -768,6 +814,44 @@ impl Store {
         )?)
     }
 
+    pub fn next_refresh_at(&self) -> Result<Option<i64>, Error> {
+        Ok(self.connection.query_row(
+            "SELECT next_refresh_at FROM app_state WHERE singleton=1",
+            [],
+            |row| row.get(0),
+        )?)
+    }
+
+    pub fn ensure_next_refresh_at(&mut self, now: i64) -> Result<i64, Error> {
+        let interval = self.refresh_interval_s()?.max(60);
+        let deadline = now.saturating_add(interval);
+        self.connection.execute(
+            "UPDATE app_state SET next_refresh_at=COALESCE(next_refresh_at,?1) WHERE singleton=1",
+            params![deadline],
+        )?;
+        self.next_refresh_at()?
+            .ok_or_else(|| Error::message("missing scheduler state"))
+    }
+
+    pub fn refresh_due(&mut self, now: i64) -> Result<bool, Error> {
+        Ok(self.ensure_next_refresh_at(now)? <= now)
+    }
+
+    pub fn schedule_after_wake(&mut self, now: i64, successful: bool) -> Result<i64, Error> {
+        let interval = self.refresh_interval_s()?.max(60);
+        let delay = if successful {
+            interval
+        } else {
+            interval.saturating_mul(2).min(86_400)
+        };
+        let deadline = now.saturating_add(delay);
+        self.connection.execute(
+            "UPDATE app_state SET next_refresh_at=?1 WHERE singleton=1",
+            params![deadline],
+        )?;
+        Ok(deadline)
+    }
+
     pub fn last_successful_refresh_at(&self) -> Result<Option<i64>, Error> {
         Ok(self.connection.query_row(
             "SELECT MAX(finished_at) FROM refresh_runs WHERE outcome=?1",
@@ -885,6 +969,39 @@ mod tests {
         let store = Store::open(&directory.path().join("rss.sqlite3")).expect("open store");
         assert_eq!(store.schema_version().expect("version"), SCHEMA_VERSION);
         assert_eq!(store.journal_mode().expect("journal"), "delete");
+    }
+
+    #[test]
+    fn persistent_wake_deadline_is_absolute_and_due_checks_are_stable() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let path = directory.path().join("rss.sqlite3");
+        let mut store = Store::open(&path).expect("open store");
+        assert_eq!(
+            store.ensure_next_refresh_at(1_000).expect("deadline"),
+            15_400
+        );
+        assert!(!store.refresh_due(1_001).expect("not due"));
+        store
+            .connection
+            .execute("UPDATE app_state SET next_refresh_at=1000", [])
+            .expect("expire deadline");
+        assert!(store.refresh_due(1_001).expect("due"));
+        assert_eq!(
+            store.schedule_after_wake(1_001, true).expect("reschedule"),
+            15_401
+        );
+        assert!(!store.refresh_due(1_002).expect("not due after refresh"));
+    }
+
+    #[test]
+    fn failed_wake_deadline_uses_bounded_backoff() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let path = directory.path().join("rss.sqlite3");
+        let mut store = Store::open(&path).expect("open store");
+        assert_eq!(
+            store.schedule_after_wake(10, false).expect("backoff"),
+            28_810
+        );
     }
 
     #[test]

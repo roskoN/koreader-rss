@@ -329,7 +329,11 @@ function RSSReader:runBackend(arguments, title, callback)
         local status = output and output:match("__RSS_EXIT=(%d+)%s*$")
         local body = trim((output or ""):gsub("%s*__RSS_EXIT=%d+%s*$", ""))
         if status ~= "0" then
-            show(_("RSS backend failed:") .. "\n" .. (body ~= "" and body or _("No diagnostic output")))
+            local diagnostic = body ~= "" and body or _("No diagnostic output")
+            if status == "137" or body == "Killed" then
+                diagnostic = diagnostic .. "\n" .. _("The backend was killed, probably because the Kindle ran out of memory. Retry after a short wait; interrupted refreshes are recoverable.")
+            end
+            show(_("RSS backend failed (exit ") .. tostring(status or "?") .. "):" .. "\n" .. diagnostic)
             return
         end
         callback(body)

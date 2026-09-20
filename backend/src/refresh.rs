@@ -28,6 +28,23 @@ pub struct RefreshLock {
 }
 
 impl RefreshLock {
+    fn owner_is_alive(pid: i64) -> bool {
+        if pid <= 0 {
+            return false;
+        }
+        if pid == i64::from(std::process::id()) {
+            return true;
+        }
+        let path = format!("/proc/{pid}/cmdline");
+        std::fs::read(path)
+            .map(|cmdline| {
+                cmdline
+                    .windows(b"rss-backend".len())
+                    .any(|part| part == b"rss-backend")
+            })
+            .unwrap_or(false)
+    }
+
     pub fn acquire(database: &Path) -> Result<Self, Error> {
         let path = database.with_extension("refresh.lock");
         let stamp = now();
@@ -43,14 +60,22 @@ impl RefreshLock {
                 Ok(Self { path })
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                let stale = std::fs::read_to_string(&path)
-                    .ok()
-                    .and_then(|text| {
-                        text.split_whitespace()
-                            .nth(1)
-                            .and_then(|value| value.parse::<i64>().ok())
-                    })
-                    .is_some_and(|started| stamp.saturating_sub(started) > 900);
+                let lock_info = std::fs::read_to_string(&path).ok();
+                let owner_pid = lock_info.as_deref().and_then(|text| {
+                    text.split_whitespace()
+                        .next()
+                        .and_then(|value| value.parse::<i64>().ok())
+                });
+                let started = lock_info.as_deref().and_then(|text| {
+                    text.split_whitespace()
+                        .nth(1)
+                        .and_then(|value| value.parse::<i64>().ok())
+                });
+                // SIGKILL cannot run Drop, so recover immediately when the
+                // recorded backend process no longer exists. Keep the age
+                // fallback for older lock files and unusual /proc setups.
+                let stale = owner_pid.is_some_and(|pid| !Self::owner_is_alive(pid))
+                    || started.is_some_and(|started| stamp.saturating_sub(started) > 900);
                 if stale {
                     std::fs::remove_file(&path)?;
                     return Self::acquire(database);
@@ -442,5 +467,16 @@ mod tests {
         assert!(RefreshLock::acquire(&database).is_err());
         drop(lock);
         assert!(RefreshLock::acquire(&database).is_ok());
+    }
+
+    #[test]
+    fn refresh_lock_recovers_after_dead_owner() {
+        let directory = tempfile::tempdir().expect("directory");
+        let database = directory.path().join("rss.sqlite3");
+        let lock_path = database.with_extension("refresh.lock");
+        std::fs::write(&lock_path, "999999999 9999999999\n").expect("stale lock");
+        let lock = RefreshLock::acquire(&database).expect("dead owner lock is stale");
+        drop(lock);
+        assert!(!lock_path.exists());
     }
 }

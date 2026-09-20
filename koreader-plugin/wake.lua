@@ -3,7 +3,8 @@ local util = require("util")
 local Wake = {}
 Wake.service = "koreader-rss-wake"
 Wake.config = "/etc/upstart/koreader-rss-wake.conf"
-Wake.version = 1
+Wake.supervisor = "/mnt/us/koreader/data/rssreader/rss-wake-supervisor.sh"
+Wake.version = 2
 
 local function exists(path)
     local handle = io.open(path, "r")
@@ -59,14 +60,31 @@ end
 function Wake.install(plugin_path, backend, database, budget)
     if not Wake.isSupported(backend) then return nil, "wake integration is not supported" end
     local template = plugin_path .. "/resources/koreader-rss-wake.conf"
+    local supervisor_template = plugin_path .. "/resources/rss-wake-supervisor.sh"
+    local supervisor = database:gsub("/[^/]+$", "/rss-wake-supervisor.sh")
     if not exists(template) then return nil, "wake template is missing" end
+    if not exists(supervisor_template) then return nil, "wake supervisor is missing" end
     if not rootWritable() then return nil, "could not make system root writable" end
     local input = io.open(template, "r")
     local text = input and input:read("*a")
     if input then input:close() end
+    local supervisor_input = io.open(supervisor_template, "r")
+    local supervisor_text = supervisor_input and supervisor_input:read("*a")
+    if supervisor_input then supervisor_input:close() end
     local ok = text ~= nil
+    if ok and supervisor_text then
+        supervisor_text = supervisor_text:gsub("@BACKEND@", backend)
+            :gsub("@DATABASE@", database):gsub("@BUDGET@", tostring(budget or 240))
+        text = text:gsub("@SUPERVISOR@", supervisor)
+        local supervisor_output = io.open(supervisor .. ".new", "w")
+        ok = supervisor_output ~= nil
+        if supervisor_output then supervisor_output:write(supervisor_text); supervisor_output:close() end
+        if ok then ok = os.rename(supervisor .. ".new", supervisor) end
+        if ok then ok = command({ "chmod", "755", supervisor }) end
+    else
+        ok = false
+    end
     if ok then
-        text = text:gsub("@BACKEND@", backend):gsub("@DATABASE@", database):gsub("@BUDGET@", tostring(budget or 30))
         local output = io.open(Wake.config .. ".new", "w")
         ok = output ~= nil
         if output then output:write(text); output:close() end
@@ -84,6 +102,7 @@ function Wake.uninstall()
     if not Wake.isInstalled() then return true end
     if not rootWritable() then return nil, "could not make system root writable" end
     local ok = os.remove(Wake.config) == true
+    os.remove(Wake.supervisor)
     local restored = rootReadonly()
     if not restored then return nil, "removed wake service but could not restore read-only root" end
     return ok or not exists(Wake.config), ok and nil or "could not remove wake service"

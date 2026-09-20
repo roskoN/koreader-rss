@@ -37,9 +37,10 @@ persisted backoff, and successful work advances the fair scheduler cursor.
 ## Current trigger state
 
 The optional suspend/resume integration is managed by the plugin and uses an
-Upstart listener for `com.lab126.powerd`'s `wakeupFromSuspend` event. It is
-disabled until the user explicitly enables it. The service does not schedule
-RTC alarms, poll power state, or run when the feature is disabled. See
+Upstart supervisor for `com.lab126.powerd`'s `readyToSuspend` and
+`wakeupFromSuspend` events. It is disabled until the user explicitly enables
+it. The supervisor arms `rtcWakeup` through powerd from the persisted absolute
+deadline and does not poll while suspended. See
 [`WAKE-INTEGRATION.md`](WAKE-INTEGRATION.md) for the complete lifecycle.
 
 ## Investigated Kindle interfaces
@@ -54,8 +55,10 @@ On the PW4 test device, the following interfaces exist:
 - `/usr/sbin/crond`.
 
 An attempt to set `rtcWakeup` while the device was active returned
-`lipcPropErrInvalidState`. This establishes that the property is state-sensitive
-but does not verify the required value format or suspend/wake behavior.
+`lipcPropErrInvalidState`; setting it during `readyToSuspend 1` is the verified
+arming path for this integration. Full repeated-cycle behavior, temporary
+`deferSuspend` semantics, Wi-Fi readiness, and battery impact remain
+`NEEDS EXPERIMENT`.
 
 ## Required device acceptance experiment
 
@@ -76,22 +79,21 @@ classified as `VERIFIED`. Host and QEMU results cannot establish Kindle power,
 Wi-Fi, or battery behavior.
 
 The exact command-by-command RTC investigation remains in
-[`docs/WAKE-EXPERIMENT.md`](WAKE-EXPERIMENT.md), but RTC alarms are not needed
-for the production suspend/resume integration.
+[`docs/WAKE-EXPERIMENT.md`](WAKE-EXPERIMENT.md); the production path uses
+powerd's `rtcWakeup` arbitration rather than raw RTC sysfs writes.
 
-## Intended final integration
+## Wake refresh lifecycle
 
-Once a wake mechanism is verified, it should invoke only the one-shot wrapper:
+The installed supervisor invokes the backend directly:
 
 ```text
 /mnt/us/koreader/plugins/rssreader.koplugin/refresh-job.sh
 ```
 
-The schedule should be no more frequent than the configured feed interval,
-respect the persisted due times, and avoid leaving a keep-awake request or
-background process behind. If reliable Kindle wake scheduling cannot be
-established, the fallback is to invoke this wrapper whenever the device is
-reachable over SSH or when KOReader resumes.
+The schedule is no more frequent than the configured feed interval, respects
+the persisted due time, and releases temporary suspend deferral after the
+bounded operation. The one-shot wrapper remains available for manual/device
+diagnostics.
 
 ## Validation commands
 
