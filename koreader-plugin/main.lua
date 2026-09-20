@@ -91,16 +91,25 @@ function RSSReader:showAllArticles(feed_id, title, offset)
     if #result == 100 then
         result[#result + 1] = { text = _("Next page →"), next_offset = offset + 100 }
     end
-    local menu = Menu:new{
+    local menu
+    local menu_closed = false
+    local function close_menu()
+        if not menu_closed then
+            menu_closed = true
+            UIManager:close(menu)
+        end
+    end
+    menu = Menu:new{
         title = title or _("Latest articles"), item_table = result, covers_fullscreen = true,
         multilines_forced = true,
         items_max_lines = 2,
+        close_callback = close_menu,
         onMenuSelect = function(_, item)
             if item.next_offset then
-                UIManager:close(menu)
+                close_menu()
                 self:showAllArticles(feed_id, title, item.next_offset)
             else
-                UIManager:close(menu)
+                close_menu()
                 self:openArticle(item.article_id)
             end
         end,
