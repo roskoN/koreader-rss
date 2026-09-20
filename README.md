@@ -33,7 +33,7 @@ Open **RSS Reader** from the KOReader main menu.
   confirmation.
 - **Remove all feeds** — permanently delete feeds and their dependent articles
   after confirmation.
-- **Refresh now** — run a bounded manual refresh.
+- **Refresh now** — process all due feeds without an overall time limit.
 - **Refresh status** — display the latest refresh outcome and counters.
 - **Wake refresh** — open explicit **Check status**, **Enable**, and **Disable**
   actions for refresh after a genuine Kindle suspend/resume cycle.
@@ -60,8 +60,10 @@ retry. Imports are idempotent.
 
 ## Refresh behavior
 
-Manual refresh is available from the **Refresh now** menu item. The backend
-also has a one-shot unattended wrapper:
+Manual refresh is available from the **Refresh now** menu item. It processes
+all due feeds and entries until completion; individual network requests still
+use their normal connection/read timeouts. The backend also has a one-shot
+unattended wrapper:
 
 ```text
 /mnt/us/koreader/plugins/rssreader.koplugin/refresh-job.sh

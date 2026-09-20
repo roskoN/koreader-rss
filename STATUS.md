@@ -19,6 +19,8 @@ Completed capabilities include:
   database target; existing Kindle data migrated successfully.
 - Fair persisted scheduling, refresh-run outcomes, status reporting, overlap
   locking, `Retry-After`, feed error reporting, and confirmed purge actions.
+- Manual **Refresh now** runs unbounded until all due work completes; wake and
+  unattended refreshes remain explicitly time-bounded.
 - Article page and embedded-image downloads now use a bounded four-thread worker
   pool per feed; SQLite writes remain serialized and deterministic.
 - KOReader RSS Reader menu with latest/per-feed views, paging, two-line entries,
@@ -47,6 +49,8 @@ Automated validation is passing:
   formatting after the wake changes.
 - Live RSS smoke tests passed for The Verge (10 entries) and Ars Technica (20
   entries).
+- Unbounded manual refresh smoke test recorded `budget_s=0` and completed
+  successfully.
 - Kindle database migration verified at schema version 2 with no `is_read` or
   `read_at` columns and `max_db_bytes=536870912`; 43 existing articles were
   preserved.

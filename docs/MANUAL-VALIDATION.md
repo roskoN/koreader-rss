@@ -150,7 +150,7 @@ policy (§H): `max_width`, `max_height = 2×`, `max_pixels = 2×` (never upscale
 | Remove feed | hold a feed row | confirm, runs `feed remove ID` | |
 | Latest article list | → Latest articles | reads newest `articles` join, ≤100 rows, count in title | |
 | Open article | tap latest row | materialize + `showReader`; no read-state write | §4 |
-| Refresh | Main menu / `refresh` | bounded, structured status in SQLite | |
+| Refresh | Main menu / `refresh` | completes all due work, structured status in SQLite | |
 | Status | → Status | shows run counters/outcome | |
 | External link | hold article | opens URL in stock reader | |
 
@@ -196,7 +196,7 @@ All commands take `--db PATH` (data DB) and, where noted, `--cache DIR`.
 - `rss-backend --db PATH feed add URL` → §9 Add feed
 - `rss-backend --db PATH feed list` → §9 Feeds
 - `rss-backend --db PATH feed remove ID` → §9 Remove feed
-- `rss-backend --db PATH refresh [--budget SEC] [--feed ID] [--reason manual|wake]` → §9 Refresh
+- `rss-backend --db PATH refresh [--budget SEC] [--unbounded] [--feed ID] [--reason manual|wake]` → §9 Refresh
 - `rss-backend --db PATH materialize ID --cache DIR` → §4 (prints one absolute path)
 - `rss-backend --db PATH materialize-fixture --out DIR` → §4
 - `rss-backend --db PATH init-probe-db --db PATH` → §3

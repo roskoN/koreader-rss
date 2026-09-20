@@ -125,7 +125,7 @@ fn run_one(store: &mut Store, feed_id: i64, budget_s: u64) -> Result<(usize, usi
             return Err(error);
         }
     };
-    if started.elapsed() > Duration::from_secs(budget_s) {
+    if budget_s > 0 && started.elapsed() > Duration::from_secs(budget_s) {
         return Err(Error::message("refresh budget exhausted"));
     }
     match response {
@@ -215,15 +215,16 @@ pub fn run_all_with_reason(
     let mut inserted = 0;
     let mut failures = 0;
     for feed_id in store.due_feeds(now())? {
-        if started.elapsed() >= Duration::from_secs(budget_s) {
+        if budget_s > 0 && started.elapsed() >= Duration::from_secs(budget_s) {
             break;
         }
+        let remaining_budget = if budget_s == 0 {
+            0
+        } else {
+            budget_s.saturating_sub(started.elapsed().as_secs())
+        };
         let feed = store.feed(Some(feed_id))?;
-        match run_one(
-            store,
-            feed_id,
-            budget_s.saturating_sub(started.elapsed().as_secs()),
-        ) {
+        match run_one(store, feed_id, remaining_budget) {
             Ok((new, failed)) => {
                 inserted += new;
                 failures += failed;

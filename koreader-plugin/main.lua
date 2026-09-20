@@ -134,7 +134,7 @@ function RSSReader:showStatus()
 end
 
 function RSSReader:refreshNow()
-    self:runBackend({ self.backend, "--db", self.database, "refresh", "--reason", "manual" },
+    self:runBackend({ self.backend, "--db", self.database, "refresh", "--reason", "manual", "--unbounded" },
         _("Refreshing feeds…"), function() self:showStatus() end)
 end
 
