@@ -182,31 +182,47 @@ function RSSReader:refreshNow()
         _("Refreshing feeds…"), function() self:showStatus() end)
 end
 
-function RSSReader:showWake()
+function RSSReader:showWakeStatus()
+    local status = Wake.status(self.backend)
+    local support = status.supported and _("supported") or _("unsupported")
+    local state = status.running and _("running") or (status.installed and _("stopped") or _("not installed"))
+    show(string.format(
+        _("Wake refresh: %s\nService: %s\nConfiguration version: %s"),
+        support, state, tostring(status.version or _("none"))
+    ))
+end
+
+function RSSReader:enableWake()
     local status = Wake.status(self.backend)
     if not status.supported then
         show(_("Wake refresh is not supported on this device."))
         return
     end
-    local state = status.running and _("Running") or (status.installed and _("Stopped") or _("Not installed"))
+    if status.installed then
+        show(_("Wake refresh is already enabled."))
+        return
+    end
+    local ok, err = Wake.install(self.path, self.backend, self.database, 30)
+    show(ok and _("Wake refresh enabled.") or tostring(err))
+end
+
+function RSSReader:disableWake()
+    local status = Wake.status(self.backend)
+    if not status.installed then
+        show(_("Wake refresh is already disabled."))
+        return
+    end
+    local ok, err = Wake.uninstall()
+    show(ok and _("Wake refresh disabled.") or tostring(err))
+end
+
+function RSSReader:showWake()
     local actions = Menu:new{
         title = _("Wake refresh"),
         item_table = {
-            { text = string.format(_("Service: %s"), state), mandatory = true },
-            { text = string.format(_("Configuration version: %s"), tostring(status.version or _("none"))), mandatory = true },
-            { text = status.installed and _("Disable wake refresh") or _("Enable wake refresh"), callback = function()
-                UIManager:close(actions)
-                if status.installed then
-                    local ok, err = Wake.uninstall()
-                    show(ok and _("Wake refresh disabled.") or tostring(err))
-                else
-                    local ok, err = Wake.install(self.path, self.backend, self.database, 30)
-                    show(ok and _("Wake refresh enabled.") or tostring(err))
-                end
-            end },
-            { text = _("Show refresh status"), callback = function()
-                UIManager:close(actions); self:showStatus()
-            end },
+            { text = _("Check status"), callback = function() UIManager:close(actions); self:showWakeStatus() end },
+            { text = _("Enable"), callback = function() UIManager:close(actions); self:enableWake() end },
+            { text = _("Disable"), callback = function() UIManager:close(actions); self:disableWake() end },
         },
         covers_fullscreen = true,
     }
