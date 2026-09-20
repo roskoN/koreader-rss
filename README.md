@@ -34,8 +34,8 @@ Open **RSS Reader** from the KOReader main menu.
   after confirmation.
 - **Refresh now** — run a bounded manual refresh.
 - **Refresh status** — display the latest refresh outcome and counters.
-- **Wake refresh** — inspect support/status and optionally enable refresh after
-  a genuine Kindle suspend/resume cycle.
+- **Wake refresh** — open explicit **Check status**, **Enable**, and **Disable**
+  actions for refresh after a genuine Kindle suspend/resume cycle.
 - **Environment and paths** — show application paths and device information.
 - **Run backend doctor** — run critical SQLite/runtime checks.
 - **Test HTTPS and certificates** — verify network access.
@@ -72,6 +72,22 @@ waits for the genuine `wakeupFromSuspend` event and runs the same bounded
 backend command. It is never installed silently. See
 [docs/WAKE-INTEGRATION.md](docs/WAKE-INTEGRATION.md).
 
+### Wake refresh menu
+
+The **Wake refresh** menu provides three explicit actions:
+
+- **Check status** — report device support, service state, and configuration
+  version.
+- **Enable** — install the versioned Upstart listener and start it after safely
+  restoring the system root to read-only.
+- **Disable** — stop the listener and remove its configuration.
+
+The listener waits for `com.lab126.powerd`'s `wakeupFromSuspend` event, then
+runs a short `rss-backend refresh --reason wake` command. The backend enforces
+the refresh lock, minimum interval, retry policy, and time budget. KOReader
+does not need to be running when the Kindle wakes. The feature does not create
+RTC alarms, poll power state, or use `outOfScreenSaver` as a trigger.
+
 ## Installation and development
 
 The repository provides Make targets for the verified Kindle target:
@@ -85,9 +101,23 @@ make test-arm             # ARM cross-build and QEMU smoke tests
 make validate-device      # SSH device diagnostics
 make deploy-backend KOREADER_DIR=/mnt/us/koreader
 make deploy-plugin KOREADER_DIR=/mnt/us/koreader
+make deploy KOREADER_DIR=/mnt/us/koreader
 ```
 
+`make package` creates a complete plugin bundle containing the Lua files,
+backend, `feeds/` OPML import directory, and wake integration resources.
 Restart KOReader after deploying plugin changes.
+
+### Live feed smoke tests
+
+`make test-feeds` performs bounded live `feed check` requests against:
+
+- `https://www.theverge.com/rss/index.xml`
+- `https://feeds.arstechnica.com/arstechnica/index`
+
+The test verifies that both feeds are reachable, parse successfully, and
+contain entries. It requires network access and is separate from the
+deterministic workspace test suite.
 
 ## Technical setup
 
