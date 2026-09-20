@@ -191,3 +191,7 @@ See:
 - [docs/WAKE-INTEGRATION.md](docs/WAKE-INTEGRATION.md) — suspend/resume wake
   integration.
 - [docs/MANUAL-VALIDATION.md](docs/MANUAL-VALIDATION.md) — device validation checklist.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
