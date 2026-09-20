@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test and validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.82.0
+          components: rustfmt, clippy
+      - name: Install LuaJIT
+        run: sudo apt-get update && sudo apt-get install --yes luajit
+      - name: Run Rust tests, formatting, and Clippy
+        run: make test
+      - name: Run interruption and cache validation
+        run: make validate
+      - name: Check Lua syntax
+        run: |
+          for file in koreader-plugin/*.lua; do
+            luajit -b "$file" /dev/null
+          done
+
+  arm:
+    name: ARMv7 smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.82.0
+      - name: Install cross compiler and QEMU
+        run: |
+          cargo install cross --git https://github.com/cross-rs/cross --locked
+          sudo apt-get update
+          sudo apt-get install --yes qemu-user
+      - name: Build and smoke-test ARM artifact
+        run: make test-arm

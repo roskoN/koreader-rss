@@ -91,6 +91,38 @@ the refresh lock, minimum interval, retry policy, and time budget. KOReader
 does not need to be running when the Kindle wakes. The feature does not create
 RTC alarms, poll power state, or use `outOfScreenSaver` as a trigger.
 
+## Installation for users
+
+Download the ZIP archive from the repository's [GitHub Releases](https://github.com/roskoN/koreader-rss/releases)
+page. The first public release is `v0.0.1`. The package is intended for a
+jailbroken **Kindle Paperwhite 4 (10th generation)** running KOReader.
+
+1. Install KOReader on the jailbroken Kindle and start it once.
+2. Download `rssreader-0.0.1.zip` (or a newer release) on your computer.
+3. Extract the archive. It contains a directory named `rssreader.koplugin`.
+4. Connect the Kindle over USB and copy that complete directory to:
+
+   ```text
+   /mnt/us/koreader/plugins/rssreader.koplugin/
+   ```
+
+   Merge only when upgrading an existing installation; do not rename the
+   directory or copy only the Lua files. The archive contains the ARMv7
+   backend required by the Kindle.
+5. Safely eject the Kindle, restart KOReader, and open **RSS Reader** from the
+   main menu.
+
+The package has been exercised on a Kindle Paperwhite 4 with kernel
+`4.1.15-lab126` and KOReader `v2026.07.1`. Feed fetching, backend execution,
+SQLite probes, fixture materialization, and package deployment were verified on
+that device. KOReader visual rendering, suspend/resume wake behavior, Wi-Fi
+readiness, and battery impact still require device-specific validation; see
+[docs/MANUAL-VALIDATION.md](docs/MANUAL-VALIDATION.md).
+
+To remove the plugin, exit KOReader and delete the
+`/mnt/us/koreader/plugins/rssreader.koplugin/` directory. This does not modify
+the stock Kindle UI or its unrelated data.
+
 ## Installation and development
 
 The repository provides Make targets for the verified Kindle target:

@@ -95,6 +95,24 @@ separate experiment.
 3. Implement selector settings, larger extraction benchmarks, and
    refresh-transaction kill tests if needed after device observations.
 
+## Project publishing setup
+
+The workspace version is now `0.0.1`. GitHub project governance and publishing
+files were added:
+
+- `.github/workflows/ci.yml` runs formatting, Clippy, Rust tests, cache
+  validation, Lua syntax checks, and ARMv7/QEMU smoke tests on pull requests
+  and pushes to `main`.
+- `.github/workflows/release.yml` builds the ARMv7 package for `v*` tags and
+  publishes a downloadable ZIP archive to the GitHub release.
+- `CONTRIBUTING.md` documents the fork-and-pull-request workflow.
+- GitHub `main` branch protection is configured with required PR review, no
+  force-push/direct-push access, and both CI jobs as required checks.
+- `README.md` documents user installation and the verified Kindle evidence.
+
+The first release tag should be `v0.0.1`; it must be created after these
+changes are merged to `main` so the release workflow can publish the archive.
+
 The concurrent downloader and wake integration changes have now been deployed;
 device diagnostics passed. UI rendering and suspend/resume acceptance remain
 manual.
