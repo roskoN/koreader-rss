@@ -100,6 +100,7 @@ function RSSReader:showAllArticles(feed_id, title, offset)
                 UIManager:close(menu)
                 self:showAllArticles(feed_id, title, item.next_offset)
             else
+                UIManager:close(menu)
                 self:openArticle(item.article_id)
             end
         end,
