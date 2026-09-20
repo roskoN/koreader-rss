@@ -197,9 +197,9 @@ from the former read/unread columns when the backend first opens them.
 ### Scheduling
 
 Feeds have immutable scheduling order, persisted due times, backoff, and
-stable jitter. Due feeds are selected fairly using a persisted cursor. Refresh
-runs record progress and outcomes, and an overlap lock prevents concurrent
-refreshes.
+stable jitter. Due feeds are processed sequentially in deterministic order.
+Refresh runs record progress and outcomes, and an overlap lock prevents
+concurrent refreshes.
 
 ### Article processing
 

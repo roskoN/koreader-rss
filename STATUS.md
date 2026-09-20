@@ -17,8 +17,9 @@ Completed capabilities include:
   latest-article retention, physical-size maintenance, and cache bounds.
 - SQLite schema v2 removes persisted read/unread columns and uses a 512 MiB
   database target; existing Kindle data migrated successfully.
-- Fair persisted scheduling, refresh-run outcomes, status reporting, overlap
-  locking, `Retry-After`, feed error reporting, and confirmed purge actions.
+- Deterministic sequential feed scheduling, refresh-run outcomes, status
+  reporting, overlap locking, `Retry-After`, feed error reporting, and
+  confirmed purge actions.
 - Manual **Refresh now** runs unbounded until all due work completes; wake and
   unattended refreshes remain explicitly time-bounded.
 - Article page and embedded-image downloads use a single bounded pipeline per
@@ -37,11 +38,13 @@ Completed capabilities include:
 - OPML smoke flow imports `assets/test-opml.opml`, verifies all 12 feeds, and
   retrieves articles from two stable feeds in that subscription set.
 - Refresh article preparation releases the feed response before page downloads
-  and processes one entry at a time to minimize Kindle peak memory;
-  full-device allocation behavior remains unverified.
-- Refresh now queries persisted article dedupe keys before preparing entries,
-  so already-downloaded entries and duplicate entries in one feed response do
-  not trigger page, extraction, image, or compression work.
+  and processes one entry at a time to minimize Kindle peak memory. RSS feed
+  content is committed before page work, then upgraded in place when full-page
+  extraction succeeds. Persisted source kind distinguishes feed fallback from
+  full-page content, allowing failed page downloads to be retried; full-device
+  allocation behavior remains unverified.
+- Refresh checks persisted article source kind before preparing entries, so
+  full-page articles are skipped while feed-fallback articles are retried.
 - Refresh lock recovery now detects a dead backend owner through `/proc` (while
   retaining the age fallback), so a SIGKILL/OOM cannot block later refreshes
   until the 15-minute stale-lock timeout; KOReader reports exit status 137 and
@@ -70,6 +73,10 @@ Automated validation is passing:
   memory-bounded downloader change.
 - Duplicate-download prevention passed workspace tests, Clippy, automated
   validation, and the materialization benchmark.
+- Sequential scheduling and feed-first article persistence pass workspace tests,
+  Clippy, formatting, and Lua syntax checks.
+- Persisted feed/page source provenance and page-retry behavior pass workspace
+  tests, Clippy, and formatting.
 - Kindle database migration verified at schema version 3 with no `is_read` or
   `read_at` columns and `max_db_bytes=536870912`; 43 existing articles were
   preserved.

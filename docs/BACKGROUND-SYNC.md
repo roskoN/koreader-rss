@@ -6,8 +6,9 @@ Background synchronization is designed as a short-lived, bounded backend
 operation. The project does not run a permanent RSS daemon on the Kindle.
 
 The persisted scheduler stores each feed's `next_due_at` and selects enabled,
-due feeds fairly using `app_state.scheduler_cursor`. Refresh progress is stored
-in `refresh_runs`, so a later invocation can continue after interruption.
+due feeds in deterministic schedule order. Each feed and its articles are
+processed sequentially; refresh progress and outcomes are stored in
+`refresh_runs`.
 
 ## Refresh entrypoint
 
@@ -32,7 +33,8 @@ This is a one-shot unattended-refresh wrapper. It:
 6. Exits without changing keep-awake or suspend settings.
 
 The backend refresh lock prevents overlapping invocations. Feed failures use
-persisted backoff, and successful work advances the fair scheduler cursor.
+persisted backoff. RSS article content is committed before full-page processing
+so an interrupted article retains a usable fallback.
 
 ## Current trigger state
 

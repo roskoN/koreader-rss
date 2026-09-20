@@ -19,6 +19,8 @@ use crate::feed::ParsedEntry;
 use crate::Error;
 
 pub const COMPRESSION_CODEC: i64 = 1;
+pub const SOURCE_KIND_FEED: i64 = 1;
+pub const SOURCE_KIND_PAGE: i64 = 2;
 pub const CONTENT_FORMAT: i64 = 1;
 pub const STORAGE_VERSION: i64 = 1;
 const CACHE_MAX_FILES: usize = 3;

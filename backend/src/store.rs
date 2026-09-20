@@ -497,24 +497,13 @@ impl Store {
     }
 
     pub fn due_feeds(&self, now: i64) -> Result<Vec<i64>, Error> {
-        let cursor: i64 = self.connection.query_row(
-            "SELECT scheduler_cursor FROM app_state WHERE singleton=1",
-            [],
-            |row| row.get(0),
-        )?;
         let mut statement = self.connection.prepare(
-            "SELECT id,schedule_order FROM feeds WHERE enabled=1 AND next_due_at<=?1 ORDER BY schedule_order",
+            "SELECT id FROM feeds WHERE enabled=1 AND next_due_at<=?1 ORDER BY schedule_order,id",
         )?;
-        let rows = statement.query_map(params![now], |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
-        })?;
-        let mut feeds = rows.collect::<rusqlite::Result<Vec<_>>>()?;
-        let split = feeds
-            .iter()
-            .position(|(_, order)| *order >= cursor)
-            .unwrap_or(0);
-        feeds.rotate_left(split);
-        Ok(feeds.into_iter().map(|(id, _)| id).collect())
+        let rows = statement
+            .query_map(params![now], |row| row.get(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
     }
 
     pub fn begin_refresh_run(
@@ -541,17 +530,12 @@ impl Store {
     pub fn record_feed_attempt(
         &mut self,
         run_id: i64,
-        feed: &FeedRow,
         inserted: usize,
         failed: usize,
     ) -> Result<(), Error> {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        tx.execute(
-            "UPDATE app_state SET scheduler_cursor=?1 WHERE singleton=1",
-            params![feed.schedule_order + 1],
-        )?;
         tx.execute("UPDATE refresh_runs SET feeds_checked=feeds_checked+1,new_articles=new_articles+?2,failed_feeds=failed_feeds+CASE WHEN ?3>0 THEN 1 ELSE 0 END WHERE id=?1", params![run_id, i64::try_from(inserted).unwrap_or(i64::MAX), i64::try_from(failed).unwrap_or(i64::MAX)])?;
         tx.commit()?;
         Ok(())
@@ -618,6 +602,51 @@ impl Store {
             ],
         )?;
         transaction.commit()?;
+        Ok(changed == 1)
+    }
+
+    pub fn article_source_kind(
+        &self,
+        feed_id: i64,
+        dedupe_key: &str,
+    ) -> Result<Option<i64>, Error> {
+        self.connection
+            .query_row(
+                "SELECT source_kind FROM articles WHERE feed_id=?1 AND dedupe_key=?2",
+                params![feed_id, dedupe_key],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(Error::from)
+    }
+
+    pub fn update_article_content(
+        &mut self,
+        feed_id: i64,
+        dedupe_key: &str,
+        source_kind: i64,
+        uncompressed_size: usize,
+        content_blob: &[u8],
+    ) -> Result<bool, Error> {
+        if uncompressed_size == 0 || content_blob.is_empty() {
+            return Err(Error::message("article content must be complete"));
+        }
+        let uncompressed_size = i64::try_from(uncompressed_size)
+            .map_err(|_| Error::message("uncompressed article is too large"))?;
+        let compressed_size = i64::try_from(content_blob.len())
+            .map_err(|_| Error::message("compressed article is too large"))?;
+        let changed = self.connection.execute(
+            "UPDATE articles SET source_kind=?3,uncompressed_size=?4,compressed_size=?5,content_blob=?6
+             WHERE feed_id=?1 AND dedupe_key=?2",
+            params![
+                feed_id,
+                dedupe_key,
+                source_kind,
+                uncompressed_size,
+                compressed_size,
+                content_blob,
+            ],
+        )?;
         Ok(changed == 1)
     }
 
@@ -1068,6 +1097,17 @@ mod tests {
         assert!(store
             .insert_article(&article(feed, "a", "Older", 10))
             .expect("insert"));
+        assert_eq!(
+            store.article_source_kind(feed, "a").expect("source"),
+            Some(1)
+        );
+        assert!(store
+            .update_article_content(feed, "a", 2, 4, b"page")
+            .expect("page update"));
+        assert_eq!(
+            store.article_source_kind(feed, "a").expect("source"),
+            Some(2)
+        );
         assert!(!store
             .insert_article(&article(feed, "a", "Duplicate", 30))
             .expect("dedupe"));
@@ -1098,7 +1138,7 @@ mod tests {
     }
 
     #[test]
-    fn due_feeds_rotate_from_persisted_cursor_and_run_is_recorded() {
+    fn due_feeds_use_stable_order_and_run_is_recorded() {
         let directory = tempfile::tempdir().expect("temp directory");
         let path = directory.path().join("rss.sqlite3");
         let mut store = Store::open(&path).expect("open store");
@@ -1109,11 +1149,8 @@ mod tests {
         let run = store
             .begin_refresh_run(RUN_REASON_MANUAL, 60, 10)
             .expect("run");
-        let feed = store.feed(Some(first)).expect("lookup").expect("feed");
-        store
-            .record_feed_attempt(run, &feed, 2, 0)
-            .expect("attempt");
-        assert_eq!(store.due_feeds(1).expect("due"), vec![second, third, first]);
+        store.record_feed_attempt(run, 2, 0).expect("attempt");
+        assert_eq!(store.due_feeds(1).expect("due"), vec![first, second, third]);
         store
             .finish_refresh_run(run, 11, RUN_OUTCOME_SUCCESS, None)
             .expect("finish");
@@ -1128,7 +1165,7 @@ mod tests {
         assert_eq!(finished, Some(11));
         assert_eq!(outcome, RUN_OUTCOME_SUCCESS);
         assert_eq!(articles, 2);
-        assert_eq!(store.due_feeds(1).expect("due"), vec![second, third, first]);
+        assert_eq!(store.due_feeds(1).expect("due"), vec![first, second, third]);
     }
 
     #[test]

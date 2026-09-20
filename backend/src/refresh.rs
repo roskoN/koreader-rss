@@ -106,9 +106,7 @@ pub fn run_with_reason(
         Ok(counts) => *counts,
         Err(_) => (0, 1),
     };
-    if let Some(feed) = store.feed(Some(feed_id))? {
-        store.record_feed_attempt(run_id, &feed, inserted, failures)?;
-    }
+    store.record_feed_attempt(run_id, inserted, failures)?;
     store.finish_refresh_run(
         run_id,
         now(),
@@ -181,27 +179,64 @@ fn run_one(store: &mut Store, feed_id: i64, budget_s: u64) -> Result<(usize, usi
             // The parser owns all fields needed below; release the full feed
             // response before downloading article pages.
             drop(bytes);
-            let mut seen = store.article_dedupe_keys(feed.id)?;
-            let entries = parsed
-                .entries
-                .into_iter()
-                .filter(|entry| seen.insert(entry.dedupe_key.clone()))
-                .collect();
             let mut inserted = 0;
             let mut failures = 0;
-            download_entries(&feed, entries, |result| {
-                match result.prepared {
-                    Ok(prepared) => {
-                        if let Some(error) = result.fallback_error {
+            let client = HttpClient::new();
+            for entry in parsed.entries {
+                let existing_source = store.article_source_kind(feed.id, &entry.dedupe_key)?;
+                if existing_source == Some(article::SOURCE_KIND_PAGE) {
+                    continue;
+                }
+                let initial_inserted = if existing_source.is_none() {
+                    match insert_feed_content(store, &feed, &entry, fetched_at) {
+                        Ok(inserted) => inserted,
+                        Err(error) => {
+                            failures += 1;
                             store.record_entry_failure(
                                 feed.id,
+                                &entry,
+                                fetched_at,
+                                &error.to_string(),
+                            )?;
+                            continue;
+                        }
+                    }
+                } else {
+                    false
+                };
+                let queue_entry = ParsedEntry {
+                    id: entry.id,
+                    url: entry.url,
+                    title: entry.title,
+                    authors: entry.authors,
+                    published_at: entry.published_at,
+                    updated_at: entry.updated_at,
+                    content: None,
+                    summary: None,
+                    dedupe_key: entry.dedupe_key,
+                };
+                if queue_entry.url.is_none() {
+                    if initial_inserted {
+                        inserted += 1;
+                    }
+                    continue;
+                }
+                let mut result = prepare_entry(&feed, queue_entry, &client);
+                result.initial_inserted = initial_inserted;
+                match result.prepared {
+                    Ok(prepared) => {
+                        let changed = if result.initial_inserted {
+                            update_prepared_entry(store, &feed, &result.entry, prepared)?
+                        } else {
+                            insert_prepared_entry(
+                                store,
+                                &feed,
                                 &result.entry,
                                 fetched_at,
-                                &error,
-                            )?;
-                        }
-                        if insert_prepared_entry(store, &feed, &result.entry, fetched_at, prepared)?
-                        {
+                                prepared,
+                            )?
+                        };
+                        if changed {
                             inserted += 1;
                         }
                     }
@@ -210,8 +245,7 @@ fn run_one(store: &mut Store, feed_id: i64, budget_s: u64) -> Result<(usize, usi
                         store.record_entry_failure(feed.id, &result.entry, fetched_at, &error)?;
                     }
                 }
-                Ok(())
-            })?;
+            }
             if failures == 0 {
                 store.update_feed_success(
                     feed.id,
@@ -253,20 +287,15 @@ pub fn run_all_with_reason(
         } else {
             budget_s.saturating_sub(started.elapsed().as_secs())
         };
-        let feed = store.feed(Some(feed_id))?;
         match run_one(store, feed_id, remaining_budget) {
             Ok((new, failed)) => {
                 inserted += new;
                 failures += failed;
-                if let Some(feed) = feed.as_ref() {
-                    store.record_feed_attempt(run_id, feed, new, failed)?;
-                }
+                store.record_feed_attempt(run_id, new, failed)?;
             }
             Err(error) => {
                 failures += 1;
-                if let Some(feed) = feed.as_ref() {
-                    store.record_feed_attempt(run_id, feed, 0, 1)?;
-                }
+                store.record_feed_attempt(run_id, 0, 1)?;
                 let _ = error;
             }
         }
@@ -293,19 +322,7 @@ struct PreparedEntry {
 struct DownloadResult {
     entry: ParsedEntry,
     prepared: Result<PreparedEntry, String>,
-    fallback_error: Option<String>,
-}
-
-fn download_entries(
-    feed: &crate::store::FeedRow,
-    entries: Vec<ParsedEntry>,
-    mut on_result: impl FnMut(DownloadResult) -> Result<(), Error>,
-) -> Result<(), Error> {
-    let client = HttpClient::new();
-    for entry in entries {
-        on_result(prepare_entry(feed, entry, &client))?;
-    }
-    Ok(())
+    initial_inserted: bool,
 }
 
 fn prepare_entry(
@@ -313,8 +330,7 @@ fn prepare_entry(
     mut source: ParsedEntry,
     client: &HttpClient,
 ) -> DownloadResult {
-    let mut source_kind = 1;
-    let mut fallback_error = None;
+    let mut source_kind = article::SOURCE_KIND_FEED;
     if let Some(url) = source.url.as_deref() {
         // Prefer the canonical article page over RSS summaries/content. Keep
         // usable RSS content if the page is unavailable, so one paywalled or
@@ -331,23 +347,13 @@ fn prepare_entry(
         }) {
             Ok((content, _effective)) => {
                 source.content = Some(content);
-                source_kind = 2;
-            }
-            Err(error)
-                if source
-                    .content
-                    .as_deref()
-                    .is_some_and(|content| !content.trim().is_empty()) =>
-            {
-                fallback_error = Some(format!(
-                    "full article unavailable; used RSS content: {error}"
-                ));
+                source_kind = article::SOURCE_KIND_PAGE;
             }
             Err(error) => {
                 return DownloadResult {
                     entry: source,
                     prepared: Err(error.to_string()),
-                    fallback_error: None,
+                    initial_inserted: false,
                 };
             }
         }
@@ -355,7 +361,7 @@ fn prepare_entry(
         return DownloadResult {
             entry: source,
             prepared: Err("RSS entry has neither content nor article URL".to_owned()),
-            fallback_error: None,
+            initial_inserted: false,
         };
     }
     let html = match article::wrap(&source) {
@@ -364,7 +370,7 @@ fn prepare_entry(
             return DownloadResult {
                 entry: source,
                 prepared: Err(error.to_string()),
-                fallback_error,
+                initial_inserted: false,
             };
         }
     };
@@ -375,7 +381,7 @@ fn prepare_entry(
             return DownloadResult {
                 entry: source,
                 prepared: Err(error.to_string()),
-                fallback_error,
+                initial_inserted: false,
             };
         }
     };
@@ -389,8 +395,46 @@ fn prepare_entry(
             uncompressed_size,
             blob,
         }),
-        fallback_error,
+        initial_inserted: false,
     }
+}
+
+fn insert_feed_content(
+    store: &mut Store,
+    feed: &crate::store::FeedRow,
+    entry: &ParsedEntry,
+    fetched_at: i64,
+) -> Result<bool, Error> {
+    if entry
+        .content
+        .as_deref()
+        .or(entry.summary.as_deref())
+        .is_none_or(|content| content.trim().is_empty())
+    {
+        return Ok(false);
+    }
+    let html = article::wrap(entry)?;
+    let blob = article::compress(&html)?;
+    store.insert_article(&ArticleInsert {
+        feed_id: feed.id,
+        dedupe_key: &entry.dedupe_key,
+        guid: (!entry.id.is_empty()).then_some(entry.id.as_str()),
+        url: entry.url.as_deref(),
+        title: entry.title.as_deref().unwrap_or("(untitled)"),
+        author: entry.authors.first().map(String::as_str),
+        published_at: entry.published_at,
+        sort_at: entry
+            .published_at
+            .or(entry.updated_at)
+            .unwrap_or(fetched_at),
+        fetched_at,
+        source_kind: article::SOURCE_KIND_FEED,
+        compression_codec: article::COMPRESSION_CODEC,
+        content_format: article::CONTENT_FORMAT,
+        storage_version: article::STORAGE_VERSION,
+        uncompressed_size: html.len(),
+        content_blob: &blob,
+    })
 }
 
 fn insert_prepared_entry(
@@ -429,6 +473,21 @@ fn insert_prepared_entry(
         store.clear_entry_failure(feed.id, &entry.dedupe_key)?;
     }
     Ok(changed)
+}
+
+fn update_prepared_entry(
+    store: &mut Store,
+    feed: &crate::store::FeedRow,
+    entry: &ParsedEntry,
+    prepared: PreparedEntry,
+) -> Result<bool, Error> {
+    store.update_article_content(
+        feed.id,
+        &entry.dedupe_key,
+        prepared.source_kind,
+        prepared.uncompressed_size,
+        &prepared.blob,
+    )
 }
 
 #[cfg(test)]

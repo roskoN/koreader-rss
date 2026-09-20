@@ -163,7 +163,7 @@ All `NEEDS EXPERIMENT` per PLAN §N and §U#9.
 | Wi-Fi readiness time | trigger refresh on wake | time to first fetch | |
 | Process delays suspend? | run bounded `refresh --budget 240 --reason wake`, then suspend | measured awake duration, battery impact | |
 | Correct wake hook | experiment only after §6/§8 done | bounded progress, exits within budget/shutdown guard | |
-| Resume after suspend/kill | re-run after suspend | makes fair progress from persisted cursor | |
+| Resume after suspend/kill | re-run after suspend | resumes sequential feed processing from persisted refresh state | |
 | Backoff timing | 15m/1h/4h/12h/24h + jitter | matches schedule after failures | |
 
 ## 10. Observation log template

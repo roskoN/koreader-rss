@@ -35,7 +35,7 @@ management remain independent.
 - Plain extracted HTML with anchor elements and `href` attributes removed.
 - Bounded grayscale, EXIF-aware image processing and Base64 embedding.
 - Compressed SQLite article BLOBs and atomic disposable materialization.
-- Persisted fair scheduling, refresh-run status, overlap locking, retention,
+- Deterministic sequential scheduling, refresh-run status, overlap locking, retention,
   cache limits, and incremental vacuum maintenance.
 - Feed add/check/list/enable/disable/remove, title persistence, error
   reporting, confirmed purge controls, and OPML import from the plugin feeds
