@@ -33,6 +33,11 @@ Completed capabilities include:
   `--reason wake` refresh gating, and package/deploy support.
 - One-shot unattended refresh wrapper, host/QEMU/ARM validation, SSH device
   diagnostics, crash-boundary cache checks, and benchmarks.
+- OPML smoke flow imports `assets/test-opml.opml`, verifies all 12 feeds, and
+  retrieves articles from two stable feeds in that subscription set.
+- Refresh article preparation now uses two workers, a bounded result channel,
+  and releases the feed response before page downloads to reduce Kindle peak
+  memory; full-device allocation behavior remains unverified.
 
 ## Current evidence
 
@@ -51,6 +56,9 @@ Automated validation is passing:
   entries).
 - Unbounded manual refresh smoke test recorded `budget_s=0` and completed
   successfully.
+- OPML smoke test imported 12 feeds and retrieved 30 articles.
+- Fixture validation, Rust tests, formatting, and Clippy passed after the
+  memory-bounded downloader change.
 - Kindle database migration verified at schema version 2 with no `is_read` or
   `read_at` columns and `max_db_bytes=536870912`; 43 existing articles were
   preserved.
@@ -75,6 +83,8 @@ from host or QEMU results:
 - Full feed/article UI interaction after restart.
 - Wi-Fi readiness after wake, suspend/resume behavior, wake scheduling, total
   awake duration, and battery impact.
+- Reproduce the original Kindle allocation failure with the new two-worker,
+  bounded-result refresh and confirm peak RSS under the full subscription set.
 
 The one-shot wrapper is deployed as:
 
@@ -97,7 +107,7 @@ separate experiment.
 
 ## Project publishing setup
 
-The workspace version is now `0.0.1`. GitHub project governance and publishing
+The workspace version is now `0.0.2`. GitHub project governance and publishing
 files were added:
 
 - `.github/workflows/ci.yml` runs formatting, Clippy, Rust tests, cache
@@ -110,7 +120,7 @@ files were added:
   force-push/direct-push access, and both CI jobs as required checks.
 - `README.md` documents user installation and the verified Kindle evidence.
 
-The first release tag should be `v0.0.1`; it must be created after these
+The next release tag should be `v0.0.2`; it must be created after these
 changes are merged to `main` so the release workflow can publish the archive.
 
 The concurrent downloader and wake integration changes have now been deployed;
