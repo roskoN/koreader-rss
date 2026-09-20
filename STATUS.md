@@ -123,6 +123,8 @@ files were added:
 The next release tag should be `v0.0.2`; it must be created after these
 changes are merged to `main` so the release workflow can publish the archive.
 
-The concurrent downloader and wake integration changes have now been deployed;
-device diagnostics passed. UI rendering and suspend/resume acceptance remain
-manual.
+The two-worker memory-bounded backend `0.0.2` was deployed to the verified
+Kindle at `/mnt/us/koreader/plugins/rssreader.koplugin/bin/rss-backend`.
+ARMv7/QEMU smoke tests and Kindle device diagnostics passed, including
+materialization and concurrent read probes. UI rendering and suspend/resume
+acceptance remain manual.
