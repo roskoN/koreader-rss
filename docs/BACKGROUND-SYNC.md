@@ -36,12 +36,11 @@ persisted backoff, and successful work advances the fair scheduler cursor.
 
 ## Current trigger state
 
-The wrapper is deployed and ready, but it is **not automatically scheduled**.
-There is currently no Kindle cron entry, permanent daemon, KOReader timer, or
-powerd alarm installed by this project.
-
-This is deliberate: the correct firmware-specific wake mechanism must be
-verified before changing Kindle power-management state.
+The optional suspend/resume integration is managed by the plugin and uses an
+Upstart listener for `com.lab126.powerd`'s `wakeupFromSuspend` event. It is
+disabled until the user explicitly enables it. The service does not schedule
+RTC alarms, poll power state, or run when the feature is disabled. See
+[`WAKE-INTEGRATION.md`](WAKE-INTEGRATION.md) for the complete lifecycle.
 
 ## Investigated Kindle interfaces
 
@@ -58,25 +57,27 @@ An attempt to set `rtcWakeup` while the device was active returned
 `lipcPropErrInvalidState`. This establishes that the property is state-sensitive
 but does not verify the required value format or suspend/wake behavior.
 
-## Required wake integration experiment
+## Required device acceptance experiment
 
-Before installing an automatic trigger:
+Before treating the integration as verified:
 
 1. Record the current powerd state, battery level, and Wi-Fi state.
-2. Schedule a temporary marker command for a short interval.
-3. Suspend the Kindle normally.
-4. Verify whether the device wakes and whether the marker executes.
-5. Measure Wi-Fi readiness delay and total awake time.
-6. Run `refresh-job.sh` with a short budget.
-7. Verify the device returns to normal suspend behavior.
-8. Remove the temporary schedule and restore all power settings.
+2. Enable **Refresh after Kindle wakes** from the plugin.
+3. Verify `status koreader-rss-wake` reports a running listener.
+4. Suspend and wake the Kindle normally for several cycles.
+5. Confirm one `reason=wake` attempt per genuine resume and measure Wi-Fi
+   readiness and total awake time.
+6. Test screensaver-only transitions and unavailable Wi-Fi.
+7. Disable the feature and verify the service is stopped and removed.
+8. Verify normal suspend behavior and battery impact.
 
 The experiment must be repeated across several cycles before the behavior is
 classified as `VERIFIED`. Host and QEMU results cannot establish Kindle power,
 Wi-Fi, or battery behavior.
 
-The exact command-by-command procedure is in
-[`docs/WAKE-EXPERIMENT.md`](WAKE-EXPERIMENT.md).
+The exact command-by-command RTC investigation remains in
+[`docs/WAKE-EXPERIMENT.md`](WAKE-EXPERIMENT.md), but RTC alarms are not needed
+for the production suspend/resume integration.
 
 ## Intended final integration
 

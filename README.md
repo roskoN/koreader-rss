@@ -34,6 +34,8 @@ Open **RSS Reader** from the KOReader main menu.
   after confirmation.
 - **Refresh now** — run a bounded manual refresh.
 - **Refresh status** — display the latest refresh outcome and counters.
+- **Wake refresh** — inspect support/status and optionally enable refresh after
+  a genuine Kindle suspend/resume cycle.
 - **Environment and paths** — show application paths and device information.
 - **Run backend doctor** — run critical SQLite/runtime checks.
 - **Test HTTPS and certificates** — verify network access.
@@ -65,9 +67,10 @@ also has a one-shot unattended wrapper:
 ```
 
 It waits for HTTPS readiness, runs a short `--reason wake` refresh, writes a
-bounded rotating log, and exits. It does not install a daemon or alter Kindle
-power-management state. Automatic powerd/LIPC scheduling remains device
-experiment work; see [docs/BACKGROUND-SYNC.md](docs/BACKGROUND-SYNC.md).
+bounded rotating log, and exits. The optional powerd/Upstart integration
+waits for the genuine `wakeupFromSuspend` event and runs the same bounded
+backend command. It is never installed silently. See
+[docs/WAKE-INTEGRATION.md](docs/WAKE-INTEGRATION.md).
 
 ## Installation and development
 
@@ -75,6 +78,7 @@ The repository provides Make targets for the verified Kindle target:
 
 ```text
 make test                 # format, Clippy, and workspace tests
+make test-feeds           # live RSS checks for The Verge and Ars Technica
 make validate             # host interruption/cache validation
 make benchmark            # materialization timing and RSS measurement
 make test-arm             # ARM cross-build and QEMU smoke tests
@@ -152,4 +156,6 @@ See:
 - [PLAN.md](PLAN.md) — roadmap and acceptance gates.
 - [STATUS.md](STATUS.md) — current implementation state and evidence.
 - [docs/BACKGROUND-SYNC.md](docs/BACKGROUND-SYNC.md) — unattended refresh.
+- [docs/WAKE-INTEGRATION.md](docs/WAKE-INTEGRATION.md) — suspend/resume wake
+  integration.
 - [docs/MANUAL-VALIDATION.md](docs/MANUAL-VALIDATION.md) — device validation checklist.

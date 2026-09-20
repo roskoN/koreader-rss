@@ -98,6 +98,7 @@ pub const RUN_OUTCOME_SUCCESS: i64 = 1;
 pub const RUN_OUTCOME_PARTIAL: i64 = 2;
 pub const RUN_OUTCOME_INTERRUPTED: i64 = 3;
 pub const RUN_OUTCOME_FAILED: i64 = 4;
+pub const RUN_OUTCOME_SKIPPED: i64 = 5;
 
 fn backoff_delay(source_url: &str, failures: i64) -> i64 {
     let base = match failures {
@@ -713,6 +714,22 @@ impl Store {
             )
             .optional()
             .map_err(Error::from)
+    }
+
+    pub fn refresh_interval_s(&self) -> Result<i64, Error> {
+        Ok(self.connection.query_row(
+            "SELECT default_refresh_s FROM settings WHERE singleton=1",
+            [],
+            |row| row.get(0),
+        )?)
+    }
+
+    pub fn last_successful_refresh_at(&self) -> Result<Option<i64>, Error> {
+        Ok(self.connection.query_row(
+            "SELECT MAX(finished_at) FROM refresh_runs WHERE outcome=?1",
+            params![RUN_OUTCOME_SUCCESS],
+            |row| row.get(0),
+        )?)
     }
 
     pub fn list_articles(

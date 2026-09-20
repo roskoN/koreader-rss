@@ -11,6 +11,7 @@ local UIManager = require("ui/uimanager")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local util = require("util")
 local _ = require("gettext")
+local Wake = require("wake")
 
 local RSSReader = WidgetContainer:extend{
     name = "rssreader",
@@ -179,6 +180,37 @@ end
 function RSSReader:refreshNow()
     self:runBackend({ self.backend, "--db", self.database, "refresh", "--reason", "manual" },
         _("Refreshing feeds…"), function() self:showStatus() end)
+end
+
+function RSSReader:showWake()
+    local status = Wake.status(self.backend)
+    if not status.supported then
+        show(_("Wake refresh is not supported on this device."))
+        return
+    end
+    local state = status.running and _("Running") or (status.installed and _("Stopped") or _("Not installed"))
+    local actions = Menu:new{
+        title = _("Wake refresh"),
+        item_table = {
+            { text = string.format(_("Service: %s"), state), mandatory = true },
+            { text = string.format(_("Configuration version: %s"), tostring(status.version or _("none"))), mandatory = true },
+            { text = status.installed and _("Disable wake refresh") or _("Enable wake refresh"), callback = function()
+                UIManager:close(actions)
+                if status.installed then
+                    local ok, err = Wake.uninstall()
+                    show(ok and _("Wake refresh disabled.") or tostring(err))
+                else
+                    local ok, err = Wake.install(self.path, self.backend, self.database, 30)
+                    show(ok and _("Wake refresh enabled.") or tostring(err))
+                end
+            end },
+            { text = _("Show refresh status"), callback = function()
+                UIManager:close(actions); self:showStatus()
+            end },
+        },
+        covers_fullscreen = true,
+    }
+    UIManager:show(actions)
 end
 
 function RSSReader:showFeeds()
@@ -429,6 +461,10 @@ function RSSReader:addToMainMenu(menu_items)
             {
                 text = _("Refresh status"),
                 callback = function() self:showStatus() end,
+            },
+            {
+                text = _("Wake refresh"),
+                callback = function() self:showWake() end,
             },
             {
                 text = _("Feeds"),

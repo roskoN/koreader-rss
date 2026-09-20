@@ -365,6 +365,23 @@ fn run(arguments: &[String]) -> Result<(), Error> {
                     },
                 };
                 let _lock = refresh::RefreshLock::acquire(&db)?;
+                if reason == 2 {
+                    if let Some(last) = store.last_successful_refresh_at()? {
+                        let age = unix_now().saturating_sub(last);
+                        let interval = store.refresh_interval_s()?.max(0);
+                        if age < interval {
+                            let run = store.begin_refresh_run(reason, budget, unix_now())?;
+                            store.finish_refresh_run(
+                                run,
+                                unix_now(),
+                                store::RUN_OUTCOME_SKIPPED,
+                                Some("minimum refresh interval has not elapsed"),
+                            )?;
+                            println!("skipped=recent_success age_s={age} interval_s={interval}");
+                            return Ok(());
+                        }
+                    }
+                }
                 if feed_id == 0 {
                     let _ = refresh::run_all_with_reason(&mut store, budget, reason)?;
                 } else {

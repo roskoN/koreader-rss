@@ -42,6 +42,9 @@ management remain independent.
   directory.
 - KOReader unread/all/per-feed article views, paging, refresh/status actions,
   two-line article rows, and external-link actions.
+- Optional suspend/resume wake refresh integration with explicit KOReader
+  enable/disable controls, Upstart supervision, and bounded `reason=wake`
+  backend semantics.
 - Host, QEMU, ARM, SSH diagnostics, interruption/cache automation, and
   materialization benchmarks.
 
@@ -62,6 +65,9 @@ management remain independent.
   sidecars/cache, and filesystem locking on the installed Kindle.
 - Verify Wi-Fi readiness, suspend/resume, wake scheduling, total wake duration,
   and battery impact.
+- Complete PW4 acceptance testing for the wake integration across repeated
+  suspend/resume cycles, screensaver-only transitions, unavailable Wi-Fi,
+  reboot persistence, and uninstall.
 
 The device-only work is documented in `docs/MANUAL-VALIDATION.md` and
 `docs/BACKGROUND-SYNC.md`. Do not claim Kindle-specific behavior from host or

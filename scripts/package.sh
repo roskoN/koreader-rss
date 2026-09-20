@@ -11,7 +11,9 @@ test -f koreader-plugin/main.lua
 
 rm -rf "$package_dir"
 mkdir -p "$package_dir/bin"
+mkdir -p "$package_dir/resources"
 cp koreader-plugin/*.lua "$package_dir/"
+cp koreader-plugin/resources/*.conf "$package_dir/resources/"
 cp "$binary" "$package_dir/bin/rss-backend"
 chmod 755 "$package_dir/bin/rss-backend"
 

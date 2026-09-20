@@ -22,6 +22,9 @@ Completed capabilities include:
 - KOReader RSS Reader menu with unread/all/per-feed views, paging, two-line
   entries, feed management, refresh/status actions, external-link actions, and
   OPML startup import.
+- Optional suspend/resume wake integration with explicit Wake refresh UI,
+  versioned Upstart template, idempotent install/uninstall, bounded
+  `--reason wake` refresh gating, and package/deploy support.
 - One-shot unattended refresh wrapper, host/QEMU/ARM validation, SSH device
   diagnostics, crash-boundary cache checks, and benchmarks.
 
@@ -36,9 +39,15 @@ Automated validation is passing:
 - Host interruption/cache validation and materialization benchmark.
 - Kindle SSH backend/device diagnostics.
 - Backend tests, formatting, and Clippy after the four-thread downloader change.
+- Wake integration Lua syntax compilation, Rust workspace tests, and Rust
+  formatting after the wake changes.
+- Live RSS smoke tests passed for The Verge (10 entries) and Ars Technica (20
+  entries).
 
 The current ARM backend and KOReader plugin have been deployed to the verified
-Kindle at `/mnt/us/koreader/plugins/rssreader.koplugin/`.
+Kindle at `/mnt/us/koreader/plugins/rssreader.koplugin/`, including `wake.lua`
+and the versioned Upstart template. Post-deployment backend and package-path
+checks passed.
 
 Verified device facts include Kindle Paperwhite 4 hardware, firmware/kernel
 `4.1.15-lab126`, KOReader `v2026.07.1`, ARM backend execution, SQLite probes,
@@ -62,18 +71,19 @@ The one-shot wrapper is deployed as:
 /mnt/us/koreader/plugins/rssreader.koplugin/refresh-job.sh
 ```
 
-It is not automatically scheduled. The Kindle exposes powerd `rtcWakeup`,
-`rtcWakeup2`, and `wakeUp` interfaces, but setting `rtcWakeup` while active
-returned `lipcPropErrInvalidState`; a suspend/wake experiment is required
-before installing a persistent schedule.
+The optional Upstart listener is not enabled automatically. The Kindle exposes
+powerd `wakeupFromSuspend`; production acceptance still requires repeated
+device cycles after explicitly enabling Wake refresh. RTC scheduling remains a
+separate experiment.
 
 ## Next actions
 
 1. Run `docs/MANUAL-VALIDATION.md` after restarting KOReader.
-2. Perform the bounded powerd/RTC wake experiment described in
-   `docs/BACKGROUND-SYNC.md`.
+2. Perform the suspend/resume wake acceptance procedure described in
+   `docs/WAKE-INTEGRATION.md` and `docs/BACKGROUND-SYNC.md`.
 3. Implement selector settings, larger extraction benchmarks, and
    refresh-transaction kill tests if needed after device observations.
 
-The concurrent downloader change was host-validated only; deployment was not
-run.
+The concurrent downloader and wake integration changes have now been deployed;
+device diagnostics passed. UI rendering and suspend/resume acceptance remain
+manual.

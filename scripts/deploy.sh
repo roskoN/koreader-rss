@@ -45,6 +45,13 @@ case "$mode" in
             scp "$file" "$host:$remote_plugin/feeds/$name.new"
             ssh "$host" "mv '$remote_plugin/feeds/$name.new' '$remote_plugin/feeds/$name'"
         done
+        ssh "$host" "mkdir -p '$remote_plugin/resources'"
+        for file in koreader-plugin/resources/*.conf; do
+            test -f "$file" || continue
+            name=$(basename "$file")
+            scp "$file" "$host:$remote_plugin/resources/$name.new"
+            ssh "$host" "mv '$remote_plugin/resources/$name.new' '$remote_plugin/resources/$name'"
+        done
         scp scripts/kindle-refresh-job.sh "$host:$remote_plugin/refresh-job.sh.new"
         ssh "$host" "chmod 755 '$remote_plugin/refresh-job.sh.new' && mv '$remote_plugin/refresh-job.sh.new' '$remote_plugin/refresh-job.sh'"
         ;;
