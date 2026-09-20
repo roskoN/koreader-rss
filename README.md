@@ -94,11 +94,11 @@ RTC alarms, poll power state, or use `outOfScreenSaver` as a trigger.
 ## Installation for users
 
 Download the ZIP archive from the repository's [GitHub Releases](https://github.com/roskoN/koreader-rss/releases)
-page. The first public release is `v0.0.1`. The package is intended for a
+page. The current public release is `v0.0.2`. The package is intended for a
 jailbroken **Kindle Paperwhite 4 (10th generation)** running KOReader.
 
 1. Install KOReader on the jailbroken Kindle and start it once.
-2. Download `rssreader-0.0.1.zip` (or a newer release) on your computer.
+2. Download `rssreader-0.0.2.zip` (or a newer release) on your computer.
 3. Extract the archive. It contains a directory named `rssreader.koplugin`.
 4. Connect the Kindle over USB and copy that complete directory to:
 

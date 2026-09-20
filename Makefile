@@ -3,7 +3,7 @@ SHELL := /bin/sh
 TARGET ?= armv7-unknown-linux-musleabihf
 PACKAGE_DIR ?= dist/rssreader.koplugin
 
-.PHONY: test test-feeds validate validate-device benchmark build build-arm test-arm package deploy deploy-backend deploy-plugin kindle-test logs clean
+.PHONY: test test-feeds test-opml validate validate-device benchmark build build-arm test-arm package deploy deploy-backend deploy-plugin kindle-test logs clean
 
 test:
 	cargo fmt --all --check
@@ -12,6 +12,9 @@ test:
 
 test-feeds:
 	./scripts/feed-smoke-test.sh
+
+test-opml:
+	./scripts/opml-smoke-test.sh
 
 validate:
 	./scripts/automated-validation.sh
