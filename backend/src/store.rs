@@ -9,7 +9,7 @@ use crate::feed::ParsedEntry;
 use crate::Error;
 
 pub const APPLICATION_ID: i64 = 0x5253_5352; // "RSSR"
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -76,7 +76,6 @@ pub struct ArticleSummary {
     pub title: String,
     pub feed_title: String,
     pub sort_at: i64,
-    pub is_read: bool,
     pub url: Option<String>,
 }
 
@@ -168,7 +167,7 @@ impl Store {
                     retention_days INTEGER NOT NULL DEFAULT 90,
                     max_articles_per_feed INTEGER NOT NULL DEFAULT 500,
                     max_articles_total INTEGER NOT NULL DEFAULT 5000,
-                    max_db_bytes INTEGER NOT NULL DEFAULT 268435456,
+                     max_db_bytes INTEGER NOT NULL DEFAULT 536870912,
                     cache_max_files INTEGER NOT NULL DEFAULT 3,
                     cache_max_bytes INTEGER NOT NULL DEFAULT 33554432
                  );
@@ -212,9 +211,7 @@ impl Store {
                     published_at INTEGER,
                     sort_at INTEGER NOT NULL,
                     fetched_at INTEGER NOT NULL,
-                    source_kind INTEGER NOT NULL,
-                    is_read INTEGER NOT NULL DEFAULT 0 CHECK (is_read IN (0,1)),
-                    read_at INTEGER,
+                     source_kind INTEGER NOT NULL,
                     compression_codec INTEGER NOT NULL,
                     content_format INTEGER NOT NULL,
                     storage_version INTEGER NOT NULL,
@@ -254,12 +251,53 @@ impl Store {
 
                  CREATE INDEX idx_feeds_due ON feeds(enabled, next_due_at, schedule_order);
                  CREATE INDEX idx_articles_newest ON articles(sort_at DESC, id DESC);
-                 CREATE INDEX idx_articles_unread ON articles(is_read, sort_at DESC, id DESC);
-                 CREATE INDEX idx_articles_feed ON articles(feed_id, sort_at DESC, id DESC);
+                  CREATE INDEX idx_articles_feed ON articles(feed_id, sort_at DESC, id DESC);
                  CREATE INDEX idx_entry_failures_retry ON entry_failures(next_retry_at);
                  CREATE INDEX idx_refresh_runs_started ON refresh_runs(started_at DESC);",
             )?;
             transaction.pragma_update(None, "application_id", APPLICATION_ID)?;
+            transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+            transaction.commit()?;
+        }
+        if version == 1 {
+            let transaction = self
+                .connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            transaction.execute_batch(
+                "DROP INDEX IF EXISTS idx_articles_unread;
+                 DROP INDEX IF EXISTS idx_articles_newest;
+                 DROP INDEX IF EXISTS idx_articles_feed;
+                 ALTER TABLE articles RENAME TO articles_v1;
+                 CREATE TABLE articles (
+                     id INTEGER PRIMARY KEY,
+                     feed_id INTEGER NOT NULL REFERENCES feeds(id) ON DELETE CASCADE,
+                     dedupe_key TEXT NOT NULL,
+                     guid TEXT,
+                     url TEXT,
+                     title TEXT NOT NULL,
+                     author TEXT,
+                     published_at INTEGER,
+                     sort_at INTEGER NOT NULL,
+                     fetched_at INTEGER NOT NULL,
+                     source_kind INTEGER NOT NULL,
+                     compression_codec INTEGER NOT NULL,
+                     content_format INTEGER NOT NULL,
+                     storage_version INTEGER NOT NULL,
+                     uncompressed_size INTEGER NOT NULL,
+                     compressed_size INTEGER NOT NULL,
+                     content_blob BLOB NOT NULL,
+                     UNIQUE(feed_id, dedupe_key),
+                     CHECK (compressed_size = length(content_blob))
+                 );
+                 INSERT INTO articles(id,feed_id,dedupe_key,guid,url,title,author,published_at,sort_at,fetched_at,source_kind,compression_codec,content_format,storage_version,uncompressed_size,compressed_size,content_blob)
+                     SELECT id,feed_id,dedupe_key,guid,url,title,author,published_at,sort_at,fetched_at,source_kind,compression_codec,content_format,storage_version,uncompressed_size,compressed_size,content_blob
+                     FROM articles_v1;
+                 DROP TABLE articles_v1;
+                 CREATE INDEX idx_articles_newest ON articles(sort_at DESC, id DESC);
+                 CREATE INDEX idx_articles_feed ON articles(feed_id, sort_at DESC, id DESC);
+                 UPDATE settings SET max_db_bytes=536870912 WHERE singleton=1;
+                ",
+            )?;
             transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             transaction.commit()?;
         }
@@ -589,14 +627,6 @@ impl Store {
         ).optional()?)
     }
 
-    pub fn mark_read(&mut self, id: i64, read: bool, now: i64) -> Result<bool, Error> {
-        let changed = self.connection.execute(
-            "UPDATE articles SET is_read=?2,read_at=CASE WHEN ?2=1 THEN ?3 ELSE NULL END WHERE id=?1",
-            params![id, i64::from(read), now],
-        )?;
-        Ok(changed == 1)
-    }
-
     pub fn prune(&mut self, now: i64) -> Result<usize, Error> {
         let tx = self
             .connection
@@ -610,7 +640,7 @@ impl Store {
         let mut removed = 0usize;
         loop {
             let count = tx.execute(
-                "DELETE FROM articles WHERE id IN (SELECT id FROM articles WHERE is_read=1 AND sort_at<?1 ORDER BY sort_at,id LIMIT 50)",
+                "DELETE FROM articles WHERE id IN (SELECT id FROM articles WHERE sort_at<?1 ORDER BY sort_at,id LIMIT 50)",
                 params![age],
             )?;
             removed += count;
@@ -620,14 +650,14 @@ impl Store {
         }
         let total: i64 = tx.query_row("SELECT count(*) FROM articles", [], |row| row.get(0))?;
         if total > max_total {
-            tx.execute("DELETE FROM articles WHERE id IN (SELECT id FROM articles WHERE is_read=1 ORDER BY sort_at,id LIMIT ?1)", params![total - max_total])?;
+            removed += tx.execute("DELETE FROM articles WHERE id IN (SELECT id FROM articles ORDER BY sort_at,id LIMIT ?1)", params![total - max_total])?;
         }
-        tx.execute(
+        removed += tx.execute(
             "DELETE FROM articles WHERE id IN (
-                SELECT a.id FROM articles a JOIN (
-                    SELECT feed_id,COUNT(*) AS count FROM articles GROUP BY feed_id HAVING count > ?1
-                ) excess ON excess.feed_id=a.feed_id
-                WHERE a.is_read=1 ORDER BY a.sort_at,a.id
+                SELECT id FROM (
+                    SELECT id,ROW_NUMBER() OVER (PARTITION BY feed_id ORDER BY sort_at DESC,id DESC) AS article_rank
+                    FROM articles
+                ) ranked WHERE article_rank > ?1
             )",
             params![max_per_feed],
         )?;
@@ -641,8 +671,9 @@ impl Store {
                 if logical <= max_db_bytes {
                     break;
                 }
-                let removed = tx.execute("DELETE FROM articles WHERE id IN (SELECT id FROM articles WHERE is_read=1 ORDER BY sort_at,id LIMIT 50)", [])?;
-                if removed == 0 {
+                let count = tx.execute("DELETE FROM articles WHERE id IN (SELECT id FROM articles ORDER BY sort_at,id LIMIT 50)", [])?;
+                removed += count;
+                if count == 0 {
                     break;
                 }
             }
@@ -662,7 +693,7 @@ impl Store {
                 break;
             }
             let removed = self.connection.execute(
-                "DELETE FROM articles WHERE id IN (SELECT id FROM articles WHERE is_read=1 ORDER BY sort_at,id LIMIT 50)",
+                "DELETE FROM articles WHERE id IN (SELECT id FROM articles ORDER BY sort_at,id LIMIT 50)",
                 [],
             )?;
             if removed == 0 {
@@ -732,23 +763,20 @@ impl Store {
         )?)
     }
 
-    pub fn list_articles(
-        &self,
-        limit: usize,
-        unread_only: bool,
-    ) -> Result<Vec<ArticleSummary>, Error> {
+    pub fn list_articles(&self, limit: usize) -> Result<Vec<ArticleSummary>, Error> {
         let limit = i64::try_from(limit).map_err(|_| Error::message("limit is too large"))?;
-        let filter = if unread_only { "WHERE a.is_read=0" } else { "" };
-        let sql = format!("SELECT a.id,a.title,COALESCE(f.title,f.source_url),a.sort_at,a.is_read,a.url FROM articles a JOIN feeds f ON f.id=a.feed_id {filter} ORDER BY a.sort_at DESC,a.id DESC LIMIT ?1");
-        let mut statement = self.connection.prepare(&sql)?;
+        let mut statement = self.connection.prepare(
+            "SELECT a.id,a.title,COALESCE(f.title,f.source_url),a.sort_at,a.url
+             FROM articles a JOIN feeds f ON f.id=a.feed_id
+             ORDER BY a.sort_at DESC,a.id DESC LIMIT ?1",
+        )?;
         let rows = statement.query_map(params![limit], |row| {
             Ok(ArticleSummary {
                 id: row.get(0)?,
                 title: row.get(1)?,
                 feed_title: row.get(2)?,
                 sort_at: row.get(3)?,
-                is_read: row.get::<_, i64>(4)? != 0,
-                url: row.get(5)?,
+                url: row.get(4)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -812,26 +840,6 @@ impl Store {
         )?;
         Ok(())
     }
-
-    pub fn list_unread(&self, limit: usize) -> Result<Vec<ArticleSummary>, Error> {
-        let limit = i64::try_from(limit).map_err(|_| Error::message("limit is too large"))?;
-        let mut statement = self.connection.prepare(
-            "SELECT a.id,a.title,COALESCE(f.title,f.source_url),a.sort_at,a.is_read,a.url
-             FROM articles a JOIN feeds f ON f.id=a.feed_id
-             WHERE a.is_read=0 ORDER BY a.sort_at DESC,a.id DESC LIMIT ?1",
-        )?;
-        let rows = statement.query_map(params![limit], |row| {
-            Ok(ArticleSummary {
-                id: row.get(0)?,
-                title: row.get(1)?,
-                feed_title: row.get(2)?,
-                sort_at: row.get(3)?,
-                is_read: row.get::<_, i64>(4)? != 0,
-                url: row.get(5)?,
-            })
-        })?;
-        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
-    }
 }
 
 #[cfg(test)]
@@ -867,6 +875,54 @@ mod tests {
     }
 
     #[test]
+    fn migrates_read_state_away_and_expands_database_limit() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let path = directory.path().join("rss.sqlite3");
+        let connection = Connection::open(&path).expect("database");
+        connection
+            .execute_batch(
+                "PRAGMA user_version=1;
+                 CREATE TABLE settings(singleton INTEGER PRIMARY KEY, max_db_bytes INTEGER NOT NULL);
+                 INSERT INTO settings VALUES (1,268435456);
+                 CREATE TABLE feeds(id INTEGER PRIMARY KEY);
+                 CREATE TABLE articles(
+                     id INTEGER PRIMARY KEY, feed_id INTEGER NOT NULL REFERENCES feeds(id),
+                     dedupe_key TEXT NOT NULL, guid TEXT, url TEXT, title TEXT NOT NULL,
+                     author TEXT, published_at INTEGER, sort_at INTEGER NOT NULL,
+                     fetched_at INTEGER NOT NULL, source_kind INTEGER NOT NULL,
+                     is_read INTEGER NOT NULL DEFAULT 0, read_at INTEGER,
+                     compression_codec INTEGER NOT NULL, content_format INTEGER NOT NULL,
+                     storage_version INTEGER NOT NULL, uncompressed_size INTEGER NOT NULL,
+                     compressed_size INTEGER NOT NULL, content_blob BLOB NOT NULL,
+                     UNIQUE(feed_id,dedupe_key)
+                 );
+                 INSERT INTO feeds VALUES (1);
+                 INSERT INTO articles(id,feed_id,dedupe_key,title,sort_at,fetched_at,source_kind,is_read,compression_codec,content_format,storage_version,uncompressed_size,compressed_size,content_blob)
+                     VALUES (1,1,'a','Article',10,10,1,1,1,1,1,1,1,X'61');",
+            )
+            .expect("v1 database");
+        drop(connection);
+
+        let store = Store::open(&path).expect("migrate");
+        assert_eq!(store.schema_version().expect("version"), SCHEMA_VERSION);
+        let columns: Vec<String> = store
+            .connection
+            .prepare("PRAGMA table_info(articles)")
+            .expect("table info")
+            .query_map([], |row| row.get(1))
+            .expect("columns")
+            .collect::<rusqlite::Result<_>>()
+            .expect("column rows");
+        assert!(!columns.iter().any(|column| column == "is_read"));
+        assert!(!columns.iter().any(|column| column == "read_at"));
+        let limit: i64 = store
+            .connection
+            .query_row("SELECT max_db_bytes FROM settings", [], |row| row.get(0))
+            .expect("database limit");
+        assert_eq!(limit, 536_870_912);
+    }
+
+    #[test]
     fn feed_and_article_inserts_are_idempotent_and_ordered() {
         let directory = tempfile::tempdir().expect("temp directory");
         let mut store = Store::open(&directory.path().join("rss.sqlite3")).expect("open store");
@@ -889,9 +945,9 @@ mod tests {
             .insert_article(&article(feed, "b", "Newer", 20))
             .expect("insert"));
         assert_eq!(store.article_count().expect("count"), 2);
-        let unread = store.list_unread(10).expect("list unread");
-        assert_eq!(unread[0].title, "Newer");
-        assert_eq!(unread[1].title, "Older");
+        let articles = store.list_articles(10).expect("list articles");
+        assert_eq!(articles[0].title, "Newer");
+        assert_eq!(articles[1].title, "Older");
     }
 
     #[test]
@@ -994,23 +1050,25 @@ mod tests {
     }
 
     #[test]
-    fn retention_prefers_removing_read_articles() {
+    fn retention_keeps_latest_articles_regardless_of_read_state() {
         let directory = tempfile::tempdir().expect("temp directory");
         let mut store = Store::open(&directory.path().join("rss.sqlite3")).expect("open store");
         let feed = store.add_feed("https://example.org/feed", 1).expect("feed");
         store
-            .insert_article(&article(feed, "read", "Read", 1))
+            .insert_article(&article(feed, "old", "Old", 1))
             .expect("article");
         store
-            .insert_article(&article(feed, "unread", "Unread", 2))
+            .insert_article(&article(feed, "latest", "Latest", 2))
             .expect("article");
-        store.mark_read(1, true, 3).expect("mark read");
         store
             .connection
             .execute("UPDATE settings SET max_articles_total=1", [])
             .expect("setting");
         store.prune(100).expect("prune");
         assert_eq!(store.article_count().expect("count"), 1);
-        assert_eq!(store.list_unread(10).expect("unread")[0].title, "Unread");
+        assert_eq!(
+            store.list_articles(10).expect("articles")[0].title,
+            "Latest"
+        );
     }
 }

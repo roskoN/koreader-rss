@@ -73,60 +73,6 @@ function RSSReader:importOpmlFeeds()
         end)
 end
 
-function RSSReader:showUnread()
-    local ok, result = queryRows(self.database, [[
-            SELECT a.id, a.title, f.title, a.sort_at, a.url
-            FROM articles a JOIN feeds f ON f.id = a.feed_id
-            WHERE a.is_read = 0
-            ORDER BY a.sort_at DESC, a.id DESC
-            LIMIT 100
-        ]], function(row)
-        local published = tonumber(row[4])
-        return {
-            article_id = tonumber(row[1]),
-            text = tostring(row[2]) .. "\n" .. string.format(
-                "%s · %s",
-                tostring(row[3] or _("Unknown feed")),
-                published and os.date("%Y-%m-%d", published) or _("Unknown date")
-            ),
-            multilines_forced = true,
-            url = row[5],
-        }
-    end)
-    if not ok then
-        show(_("Cannot read unread articles:") .. "\n" .. tostring(result))
-        return
-    end
-    if #result == 0 then
-        show(_("No unread articles."))
-        return
-    end
-
-    local menu
-    menu = Menu:new{
-        title = string.format(_("Unread articles (%d)"), #result),
-        item_table = result,
-        covers_fullscreen = true,
-        multilines_forced = true,
-        items_max_lines = 2,
-        is_borderless = true,
-        is_popout = false,
-        title_bar_fm_style = true,
-        onMenuSelect = function(_, item)
-            self:openArticle(item.article_id)
-        end,
-        onMenuHold = function(_, item)
-            if item.url and item.url ~= "" then Device:openLink(item.url) end
-        end,
-    }
-    UIManager:show(menu)
-end
-
-function RSSReader:markArticle(article_id, state)
-    self:runBackend({ self.backend, "--db", self.database, "mark", tostring(article_id), state },
-        _("Updating article…"), function() self:showUnread() end)
-end
-
 function RSSReader:showAllArticles(feed_id, title, offset)
     offset = offset or 0
     local sql = "SELECT a.id,a.title,COALESCE(f.title,f.source_url),a.sort_at,a.url FROM articles a JOIN feeds f ON f.id=a.feed_id"
@@ -146,7 +92,7 @@ function RSSReader:showAllArticles(feed_id, title, offset)
         result[#result + 1] = { text = _("Next page →"), next_offset = offset + 100 }
     end
     local menu = Menu:new{
-        title = title or _("All articles"), item_table = result, covers_fullscreen = true,
+        title = title or _("Latest articles"), item_table = result, covers_fullscreen = true,
         multilines_forced = true,
         items_max_lines = 2,
         onMenuSelect = function(_, item)
@@ -348,8 +294,7 @@ function RSSReader:openArticle(article_id)
             local path = trim(output):match("([^\r\n]+)$")
             if not path or path == "" then show(_("Backend returned no article path.")); return end
             ReaderUI:showReader(path, nil, nil, nil, function()
-                self:runBackend({ self.backend, "--db", self.database, "mark", tostring(article_id), "read" },
-                    _("Marking article read…"), function() end)
+                -- Article state is intentionally not persisted.
             end)
         end)
 end
@@ -463,11 +408,7 @@ function RSSReader:addToMainMenu(menu_items)
         text = _("RSS Reader"),
         sub_item_table = {
             {
-                text = _("Unread"),
-                callback = function() self:showUnread() end,
-            },
-            {
-                text = _("All articles"),
+                text = _("Latest articles"),
                 callback = function() self:showAllArticles() end,
             },
             {

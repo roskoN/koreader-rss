@@ -40,8 +40,9 @@ management remain independent.
 - Feed add/check/list/enable/disable/remove, title persistence, error
   reporting, confirmed purge controls, and OPML import from the plugin feeds
   directory.
-- KOReader unread/all/per-feed article views, paging, refresh/status actions,
-  two-line article rows, and external-link actions.
+- KOReader latest/all-per-feed article views, paging, refresh/status actions,
+  two-line article rows, and external-link actions without persisted
+  read/unread state.
 - Optional suspend/resume wake refresh integration with explicit KOReader
   enable/disable controls, Upstart supervision, and bounded `reason=wake`
   backend semantics.

@@ -62,7 +62,7 @@ impl From<image::ImageError> for Error {
 }
 
 fn usage() -> &'static str {
-    "usage:\n  rss-backend --version\n  rss-backend doctor\n  rss-backend http-probe --url HTTPS_URL\n  rss-backend init-probe-db --db PATH\n  rss-backend materialize-fixture --out PATH\n  rss-backend --db PATH feed add URL\n  rss-backend --db PATH feed list\n  rss-backend --db PATH feed enable ID\n  rss-backend --db PATH feed disable ID\n  rss-backend --db PATH feed remove ID\n  rss-backend --db PATH init-fixture-db\n  rss-backend --db PATH device-probe --cache DIR\n  rss-backend --db PATH status\n  rss-backend --db PATH refresh [--feed ID] [--budget SEC] [--reason manual|wake]\n  rss-backend --db PATH materialize ID --cache DIR\n  rss-backend --db PATH mark ID read|unread"
+    "usage:\n  rss-backend --version\n  rss-backend doctor\n  rss-backend http-probe --url HTTPS_URL\n  rss-backend init-probe-db --db PATH\n  rss-backend materialize-fixture --out PATH\n  rss-backend --db PATH feed add URL\n  rss-backend --db PATH feed list\n  rss-backend --db PATH feed enable ID\n  rss-backend --db PATH feed disable ID\n  rss-backend --db PATH feed remove ID\n  rss-backend --db PATH init-fixture-db\n  rss-backend --db PATH device-probe --cache DIR\n  rss-backend --db PATH status\n  rss-backend --db PATH refresh [--feed ID] [--budget SEC] [--reason manual|wake]\n  rss-backend --db PATH materialize ID --cache DIR"
 }
 
 fn value_argument(arguments: &[String], flag: &str) -> Result<String, Error> {
@@ -412,19 +412,6 @@ fn run(arguments: &[String]) -> Result<(), Error> {
                     &cache,
                 )?;
                 println!("{}", path.display());
-            }
-            Some("mark") if arguments.len() == 5 => {
-                let id = arguments[3]
-                    .parse::<i64>()
-                    .map_err(|_| Error::message("invalid article ID"))?;
-                let read = match arguments[4].as_str() {
-                    "read" => true,
-                    "unread" => false,
-                    _ => return Err(Error::message(usage())),
-                };
-                if !store.mark_read(id, read, unix_now())? {
-                    return Err(Error::message("article not found"));
-                }
             }
             _ => return Err(Error::message(usage())),
         }

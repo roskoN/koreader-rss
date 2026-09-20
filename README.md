@@ -14,8 +14,10 @@ KOReader interface for feeds and locally stored articles.
 - Falls back to usable RSS content when the article page cannot be fetched.
 - Downloads, orients, converts, resizes, and embeds article images.
 - Compresses complete article HTML before storing it in SQLite.
-- Provides unread, all-article, per-feed, refresh, status, and feed-management
-  views in KOReader.
+- Provides latest-article, per-feed, refresh, status, and feed-management views
+  in KOReader.
+- Retains the newest articles by age and configured limits without tracking
+  read/unread state.
 - Supports OPML import from the plugin's `feeds` directory.
 - Keeps a bounded disposable materialization cache.
 
@@ -23,8 +25,7 @@ KOReader interface for feeds and locally stored articles.
 
 Open **RSS Reader** from the KOReader main menu.
 
-- **Unread** — list unread articles.
-- **All articles** — list stored articles with paging.
+- **Latest articles** — list stored articles newest first with paging.
 - **Feeds** — view feeds, inspect errors, open feed articles, enable/disable,
   or remove a feed.
 - **Add feed** — enter and validate an RSS/Atom URL before saving it.
@@ -135,7 +136,6 @@ SQLite authoritative store
         |
         +-- compressed article HTML BLOBs
         +-- feed/scheduler/refresh state
-        +-- read/unread state
 ```
 
 The Lua layer handles menus, user actions, subprocess invocation, and opening
@@ -152,11 +152,13 @@ Default retention settings are:
 - 500 articles per feed.
 - 5,000 articles total.
 - 90-day retention.
-- 256 MiB database target.
+- 512 MiB database target.
 - Three materialized HTML files / 32 MiB cache.
 
-Pruning prefers read articles and performs bounded incremental freelist vacuum.
-Unread content can temporarily exceed limits when it is the only content left.
+Pruning always removes the oldest articles first, regardless of whether they
+have been opened. This keeps the newest available articles within the feed,
+total-count, age, and database-size bounds. Existing databases migrate away
+from the former read/unread columns when the backend first opens them.
 
 ### Scheduling
 

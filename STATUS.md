@@ -14,14 +14,18 @@ Completed capabilities include:
   sanitization, plain HTML without links, RSS-content fallback, and bounded
   EXIF-aware grayscale image embedding.
 - Compressed self-contained article BLOBs, atomic disposable materialization,
-  unread/read state, retention, physical-size maintenance, and cache bounds.
+  latest-article retention, physical-size maintenance, and cache bounds.
+- SQLite schema v2 removes persisted read/unread columns and uses a 512 MiB
+  database target; existing Kindle data migrated successfully.
 - Fair persisted scheduling, refresh-run outcomes, status reporting, overlap
   locking, `Retry-After`, feed error reporting, and confirmed purge actions.
 - Article page and embedded-image downloads now use a bounded four-thread worker
   pool per feed; SQLite writes remain serialized and deterministic.
-- KOReader RSS Reader menu with unread/all/per-feed views, paging, two-line
-  entries, feed management, refresh/status actions, external-link actions, and
-  OPML startup import.
+- KOReader RSS Reader menu with latest/per-feed views, paging, two-line entries,
+  feed management, refresh/status actions, external-link actions, and OPML
+  startup import.
+- SQLite schema migration removing persisted read/unread columns and increasing
+  the database target from 256 MiB to 512 MiB.
 - Optional suspend/resume wake integration with explicit Wake refresh UI,
   versioned Upstart template, idempotent install/uninstall, bounded
   `--reason wake` refresh gating, and package/deploy support.
@@ -32,7 +36,7 @@ Completed capabilities include:
 
 Automated validation is passing:
 
-- 37 Rust workspace tests.
+- 38 Rust workspace tests.
 - Rust formatting and Clippy.
 - LuaJIT plugin syntax compilation.
 - ARMv7 cross-build and QEMU smoke tests.
@@ -43,6 +47,9 @@ Automated validation is passing:
   formatting after the wake changes.
 - Live RSS smoke tests passed for The Verge (10 entries) and Ars Technica (20
   entries).
+- Kindle database migration verified at schema version 2 with no `is_read` or
+  `read_at` columns and `max_db_bytes=536870912`; 43 existing articles were
+  preserved.
 
 The current ARM backend and KOReader plugin have been deployed to the verified
 Kindle at `/mnt/us/koreader/plugins/rssreader.koplugin/`, including `wake.lua`

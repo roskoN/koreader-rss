@@ -42,14 +42,15 @@ after any deploy; the menu is not visible until then.
 
 **Path:** Main menu → *RSS Reader* → sub-items:
 
-1. Unread
-2. Feeds
-3. Add feed
-4. Environment and paths
-5. Run backend doctor
-6. Test HTTPS and certificates
-7. Initialize and query SQLite
-8. Open offline HTML fixture
+1. Latest articles
+2. Refresh now / Refresh status
+3. Wake refresh (Check status / Enable / Disable)
+4. Feeds / Add feed
+5. Environment and paths
+6. Run backend doctor
+7. Test HTTPS and certificates
+8. Initialize and query SQLite
+9. Open offline HTML fixture
 
 Expected per item is recorded in §9 (feed UI) and the relevant sections below.
 
@@ -59,7 +60,7 @@ These are not device experiments but gate the device work; record pass/fail.
 
 - `cargo fmt --all --check` → clean
 - `cargo clippy --workspace --all-targets -- -D warnings` → no warnings
-- `cargo test --workspace` → 29 tests pass
+- `cargo test --workspace` → current workspace tests pass
 - `luajit -b koreader-plugin/main.lua /tmp/rssreader-main.luac` → compiles
 - `make build-arm` → `cross build --release --target armv7-unknown-linux-musleabihf --package rss-backend`
 - QEMU smoke: `qemu-arm -cpu cortex-a9 <bin> --version`, `doctor`, `init-probe-db`,
@@ -147,9 +148,8 @@ policy (§H): `max_width`, `max_height = 2×`, `max_pixels = 2×` (never upscale
 | Feeds list | → Feeds | parses `feed list` tab-separated | |
 | Add feed | → Add feed | prompts URL, runs `feed add URL` | |
 | Remove feed | hold a feed row | confirm, runs `feed remove ID` | |
-| Unread list | → Unread | reads `articles` join, ≤100 rows, count in title | |
-| Open article | tap unread row | materialize + `showReader` + after-open mark read | §4 |
-| Mark read/unread | hold unread row | backend `mark ID read/unread` | |
+| Latest article list | → Latest articles | reads newest `articles` join, ≤100 rows, count in title | |
+| Open article | tap latest row | materialize + `showReader`; no read-state write | §4 |
 | Refresh | Main menu / `refresh` | bounded, structured status in SQLite | |
 | Status | → Status | shows run counters/outcome | |
 | External link | hold article | opens URL in stock reader | |
@@ -198,7 +198,6 @@ All commands take `--db PATH` (data DB) and, where noted, `--cache DIR`.
 - `rss-backend --db PATH feed remove ID` → §9 Remove feed
 - `rss-backend --db PATH refresh [--budget SEC] [--feed ID] [--reason manual|wake]` → §9 Refresh
 - `rss-backend --db PATH materialize ID --cache DIR` → §4 (prints one absolute path)
-- `rss-backend --db PATH mark ID read|unread` → §9 Mark read/unread
 - `rss-backend --db PATH materialize-fixture --out DIR` → §4
 - `rss-backend --db PATH init-probe-db --db PATH` → §3
 
