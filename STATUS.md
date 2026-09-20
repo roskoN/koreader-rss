@@ -21,8 +21,8 @@ Completed capabilities include:
   locking, `Retry-After`, feed error reporting, and confirmed purge actions.
 - Manual **Refresh now** runs unbounded until all due work completes; wake and
   unattended refreshes remain explicitly time-bounded.
-- Article page and embedded-image downloads now use a bounded four-thread worker
-  pool per feed; SQLite writes remain serialized and deterministic.
+- Article page and embedded-image downloads use a single bounded pipeline per
+  feed; SQLite writes remain serialized and deterministic.
 - KOReader RSS Reader menu with latest/per-feed views, paging, two-line entries,
   feed management, refresh/status actions, external-link actions, and OPML
   startup import.
@@ -35,9 +35,12 @@ Completed capabilities include:
   diagnostics, crash-boundary cache checks, and benchmarks.
 - OPML smoke flow imports `assets/test-opml.opml`, verifies all 12 feeds, and
   retrieves articles from two stable feeds in that subscription set.
-- Refresh article preparation now uses two workers, a bounded result channel,
-  and releases the feed response before page downloads to reduce Kindle peak
-  memory; full-device allocation behavior remains unverified.
+- Refresh article preparation releases the feed response before page downloads
+  and processes one entry at a time to minimize Kindle peak memory;
+  full-device allocation behavior remains unverified.
+- Refresh now queries persisted article dedupe keys before preparing entries,
+  so already-downloaded entries and duplicate entries in one feed response do
+  not trigger page, extraction, image, or compression work.
 
 ## Current evidence
 
@@ -49,7 +52,8 @@ Automated validation is passing:
 - ARMv7 cross-build and QEMU smoke tests.
 - Host interruption/cache validation and materialization benchmark.
 - Kindle SSH backend/device diagnostics.
-- Backend tests, formatting, and Clippy after the four-thread downloader change.
+- Backend tests, formatting, and Clippy after the single-pipeline downloader
+  change.
 - Wake integration Lua syntax compilation, Rust workspace tests, and Rust
   formatting after the wake changes.
 - Live RSS smoke tests passed for The Verge (10 entries) and Ars Technica (20
@@ -59,6 +63,8 @@ Automated validation is passing:
 - OPML smoke test imported 12 feeds and retrieved 30 articles.
 - Fixture validation, Rust tests, formatting, and Clippy passed after the
   memory-bounded downloader change.
+- Duplicate-download prevention passed workspace tests, Clippy, automated
+  validation, and the materialization benchmark.
 - Kindle database migration verified at schema version 2 with no `is_read` or
   `read_at` columns and `max_db_bytes=536870912`; 43 existing articles were
   preserved.
@@ -83,8 +89,8 @@ from host or QEMU results:
 - Full feed/article UI interaction after restart.
 - Wi-Fi readiness after wake, suspend/resume behavior, wake scheduling, total
   awake duration, and battery impact.
-- Reproduce the original Kindle allocation failure with the new two-worker,
-  bounded-result refresh and confirm peak RSS under the full subscription set.
+- Reproduce the original Kindle allocation failure with the single-entry
+  refresh pipeline and confirm peak RSS under the full subscription set.
 
 The one-shot wrapper is deployed as:
 

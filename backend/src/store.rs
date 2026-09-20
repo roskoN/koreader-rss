@@ -1,5 +1,6 @@
 //! SQLite authority for feeds, article metadata, content, and update state.
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::time::Duration;
 
@@ -574,6 +575,18 @@ impl Store {
         Ok(changed == 1)
     }
 
+    /// Return the dedupe keys whose article content is already persisted for a
+    /// feed. Refresh uses this before starting any page or image downloads.
+    pub fn article_dedupe_keys(&self, feed_id: i64) -> Result<HashSet<String>, Error> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT dedupe_key FROM articles WHERE feed_id=?1")?;
+        let keys = statement
+            .query_map(params![feed_id], |row| row.get(0))?
+            .collect::<Result<HashSet<String>, _>>()?;
+        Ok(keys)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn update_feed_success(
         &mut self,
@@ -941,6 +954,10 @@ mod tests {
         assert!(!store
             .insert_article(&article(feed, "a", "Duplicate", 30))
             .expect("dedupe"));
+        assert_eq!(
+            store.article_dedupe_keys(feed).expect("dedupe keys"),
+            ["a".to_owned()].into_iter().collect()
+        );
         assert!(store
             .insert_article(&article(feed, "b", "Newer", 20))
             .expect("insert"));

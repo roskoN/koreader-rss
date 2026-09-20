@@ -1,9 +1,6 @@
 //! Bounded synchronous feed refresh vertical slice.
 
-use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Arc, Mutex};
-use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::article;
@@ -11,10 +8,6 @@ use crate::feed::{parse_feed, ParsedEntry};
 use crate::http::{FeedRequest, FeedResponse, HttpClient};
 use crate::store::{ArticleInsert, Store};
 use crate::Error;
-
-// Each worker may hold a page, extracted HTML, image data, and compressed
-// blob simultaneously. Keep this conservative for the Kindle's limited RAM.
-const ARTICLE_DOWNLOAD_THREADS: usize = 2;
 
 fn now() -> i64 {
     SystemTime::now()
@@ -163,9 +156,15 @@ fn run_one(store: &mut Store, feed_id: i64, budget_s: u64) -> Result<(usize, usi
             // The parser owns all fields needed below; release the full feed
             // response before downloading article pages.
             drop(bytes);
+            let mut seen = store.article_dedupe_keys(feed.id)?;
+            let entries = parsed
+                .entries
+                .into_iter()
+                .filter(|entry| seen.insert(entry.dedupe_key.clone()))
+                .collect();
             let mut inserted = 0;
             let mut failures = 0;
-            download_entries(&feed, parsed.entries, |result| {
+            download_entries(&feed, entries, |result| {
                 match result.prepared {
                     Ok(prepared) => {
                         if let Some(error) = result.fallback_error {
@@ -277,45 +276,11 @@ fn download_entries(
     entries: Vec<ParsedEntry>,
     mut on_result: impl FnMut(DownloadResult) -> Result<(), Error>,
 ) -> Result<(), Error> {
-    if entries.is_empty() {
-        return Ok(());
+    let client = HttpClient::new();
+    for entry in entries {
+        on_result(prepare_entry(feed, entry, &client))?;
     }
-    let queue = Arc::new(Mutex::new(entries.into_iter().collect::<VecDeque<_>>()));
-    let worker_count = ARTICLE_DOWNLOAD_THREADS.min(queue.lock().expect("queue lock").len());
-    // Bound completed results so workers cannot accumulate every article's
-    // prepared blob faster than SQLite can persist it.
-    let (sender, receiver) = mpsc::sync_channel(worker_count);
-    let mut workers = Vec::with_capacity(worker_count);
-    for _ in 0..worker_count {
-        let queue = Arc::clone(&queue);
-        let sender = sender.clone();
-        let feed = feed.clone();
-        workers.push(thread::spawn(move || {
-            let client = HttpClient::new();
-            loop {
-                let Some(entry) = queue.lock().expect("queue lock").pop_front() else {
-                    break;
-                };
-                let result = prepare_entry(&feed, entry, &client);
-                if sender.send(result).is_err() {
-                    break;
-                }
-            }
-        }));
-    }
-    drop(sender);
-    let mut callback_error = None;
-    for result in receiver {
-        if callback_error.is_none() {
-            if let Err(error) = on_result(result) {
-                callback_error = Some(error);
-            }
-        }
-    }
-    for worker in workers {
-        worker.join().expect("article download worker");
-    }
-    callback_error.map_or(Ok(()), Err)
+    Ok(())
 }
 
 fn prepare_entry(
