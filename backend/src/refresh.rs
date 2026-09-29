@@ -278,7 +278,12 @@ pub fn run_all_with_reason(
     let started = std::time::Instant::now();
     let mut inserted = 0;
     let mut failures = 0;
-    for feed_id in store.due_feeds(now())? {
+    let selected_feeds = if reason == crate::store::RUN_REASON_WAKE {
+        store.wake_refresh_feeds(now())?
+    } else {
+        store.due_feeds(now())?
+    };
+    for feed_id in selected_feeds {
         if budget_s > 0 && started.elapsed() >= Duration::from_secs(budget_s) {
             break;
         }

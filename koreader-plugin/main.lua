@@ -81,7 +81,7 @@ function RSSReader:showAllArticles(feed_id, title, offset)
     local ok, result = queryRows(self.database, sql, function(row)
         return {
             article_id = tonumber(row[1]),
-            text = tostring(row[2]) .. "\n" .. string.format("%s · %s", tostring(row[3]), os.date("%Y-%m-%d", tonumber(row[4]))),
+            text = tostring(row[2]) .. "\n· " .. string.format("%s · %s", tostring(row[3]), os.date("%Y-%m-%d", tonumber(row[4]))),
             multilines_forced = true,
             url = row[5],
         }
@@ -155,10 +155,16 @@ function RSSReader:enableWake()
         return
     end
     if status.installed then
-        show(_("Wake refresh is already enabled."))
+        if status.running then
+            show(_("Wake refresh is already enabled."))
+        elseif Wake.start() then
+            show(_("Wake refresh enabled."))
+        else
+            show(_("Wake refresh is installed but could not be started."))
+        end
         return
     end
-    local ok, err = Wake.install(self.path, self.backend, self.database, 30)
+    local ok, err = Wake.install(self.path, self.backend, self.database, 600)
     show(ok and _("Wake refresh enabled.") or tostring(err))
 end
 

@@ -223,10 +223,9 @@ or suspend/battery behavior; retain those observations in the log above.
 
 ## 14. Unattended refresh job
 
-The deployed plugin contains `refresh-job.sh`. It is a one-shot, bounded
-entrypoint for a verified Kindle wake/powerd hook. It waits up to one minute
-for HTTPS readiness, invokes the backend with `--reason wake --budget 60`,
-rotates a 256 KiB log, and exits without changing power-management state. It
-does not install a daemon or schedule itself. Before wiring it to a firmware
-wake mechanism, verify that the hook wakes Wi-Fi, permits the bounded process
-to finish, and restores normal suspend behavior.
+The deployed plugin contains `refresh-job.sh` as a one-shot diagnostic entrypoint.
+The wake/powerd service is the long-lived Rust `powerd-daemon`. The wrapper waits
+up to one minute for HTTPS readiness, invokes the backend with
+`--reason wake --budget 60`, and exits without changing power-management state.
+It does not install a daemon or schedule itself. Refresh results are recorded
+in SQLite, not in log files.

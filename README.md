@@ -69,10 +69,11 @@ unattended wrapper:
 /mnt/us/koreader/plugins/rssreader.koplugin/refresh-job.sh
 ```
 
-It waits for HTTPS readiness, runs a short `--reason wake` refresh, writes a
-bounded rotating log, and exits. The optional powerd/Upstart integration
-waits for the genuine `wakeupFromSuspend` event and runs the same bounded
-backend command. It is never installed silently. See
+It waits for HTTPS readiness, runs a short `--reason wake` refresh, and exits.
+The optional powerd/Upstart integration starts a long-lived Rust listener that
+arms the RTC deadline at `readyToSuspend` and
+runs the same bounded backend command after a due `wakeupFromSuspend`. It is
+never installed silently. See
 [docs/WAKE-INTEGRATION.md](docs/WAKE-INTEGRATION.md).
 
 ### Wake refresh menu
@@ -85,11 +86,11 @@ The **Wake refresh** menu provides three explicit actions:
   restoring the system root to read-only.
 - **Disable** — stop the listener and remove its configuration.
 
-The listener waits for `com.lab126.powerd`'s `wakeupFromSuspend` event, then
-runs a short `rss-backend refresh --reason wake` command. The backend enforces
-the refresh lock, minimum interval, retry policy, and time budget. KOReader
-does not need to be running when the Kindle wakes. The feature does not create
-RTC alarms, poll power state, or use `outOfScreenSaver` as a trigger.
+The listener waits for `com.lab126.powerd`'s suspend and wake events. After a
+short settling period it checks `powerd.state` and the persisted deadline
+before running a short `rss-backend refresh --reason wake` command. KOReader
+does not need to be running when the Kindle wakes, and the process does not
+poll while suspended or use `outOfScreenSaver` as a trigger.
 
 ## Installation for users
 

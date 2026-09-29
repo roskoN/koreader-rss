@@ -506,6 +506,21 @@ impl Store {
         Ok(rows)
     }
 
+    /// Feeds selected for a scheduled wake. Healthy enabled feeds are checked
+    /// on every wake; feeds with failures remain suppressed until their retry
+    /// deadline, preserving per-feed backoff.
+    pub fn wake_refresh_feeds(&self, now: i64) -> Result<Vec<i64>, Error> {
+        let mut statement = self.connection.prepare(
+            "SELECT id FROM feeds
+             WHERE enabled=1 AND (failure_count=0 OR next_due_at<=?1)
+             ORDER BY schedule_order,id",
+        )?;
+        let rows = statement
+            .query_map(params![now], |row| row.get(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
     pub fn begin_refresh_run(
         &mut self,
         reason: i64,
@@ -1166,6 +1181,64 @@ mod tests {
         assert_eq!(outcome, RUN_OUTCOME_SUCCESS);
         assert_eq!(articles, 2);
         assert_eq!(store.due_feeds(1).expect("due"), vec![first, second, third]);
+    }
+
+    #[test]
+    fn wake_refresh_selects_healthy_feeds_and_respects_failure_backoff() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let mut store = Store::open(&directory.path().join("rss.sqlite3")).expect("open store");
+        let healthy = store
+            .add_feed("https://example.com/healthy", 1)
+            .expect("healthy feed");
+        let backed_off = store
+            .add_feed("https://example.com/backoff", 1)
+            .expect("backoff feed");
+        let retry_due = store
+            .add_feed("https://example.com/retry-due", 1)
+            .expect("retry-due feed");
+        let disabled = store
+            .add_feed("https://example.com/disabled", 1)
+            .expect("disabled feed");
+        store
+            .update_feed_success(
+                healthy,
+                None,
+                "https://example.com/healthy",
+                None,
+                None,
+                10,
+                10_000,
+            )
+            .expect("record healthy recent success");
+        store
+            .update_feed_failure(backed_off, "offline", 10)
+            .expect("set retry backoff");
+        store
+            .connection
+            .execute(
+                "UPDATE feeds SET failure_count=1,next_due_at=100 WHERE id=?1",
+                params![retry_due],
+            )
+            .expect("make retry due");
+        store
+            .connection
+            .execute("UPDATE feeds SET enabled=0 WHERE id=?1", params![disabled])
+            .expect("disable feed");
+
+        assert_eq!(
+            store.due_feeds(50).expect("normal due feeds"),
+            Vec::<i64>::new()
+        );
+        assert_eq!(
+            store.wake_refresh_feeds(50).expect("wake feeds"),
+            vec![healthy]
+        );
+        assert_eq!(
+            store
+                .wake_refresh_feeds(101)
+                .expect("wake feeds after retry due"),
+            vec![healthy, retry_due]
+        );
     }
 
     #[test]

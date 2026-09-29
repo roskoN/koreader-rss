@@ -4,7 +4,21 @@ local Wake = {}
 Wake.service = "koreader-rss-wake"
 Wake.config = "/etc/upstart/koreader-rss-wake.conf"
 Wake.supervisor = "/mnt/us/koreader/data/rssreader/rss-wake-supervisor.sh"
-Wake.version = 2
+Wake.version = 5
+
+local function absolutePath(path)
+    if path:sub(1, 1) == "/" then return path end
+    local pipe = io.popen("pwd -P", "r")
+    if not pipe then return nil end
+    local cwd = pipe:read("*l")
+    pipe:close()
+    if not cwd or cwd:sub(1, 1) ~= "/" then return nil end
+    return cwd .. "/" .. path
+end
+
+local function replacement(value)
+    return (value:gsub("%%", "%%%%"))
+end
 
 local function exists(path)
     local handle = io.open(path, "r")
@@ -40,6 +54,10 @@ function Wake.isRunning()
     return command({ "status", Wake.service })
 end
 
+function Wake.start()
+    return command({ "start", Wake.service })
+end
+
 function Wake.status(backend)
     local installed = Wake.isInstalled()
     local version
@@ -58,6 +76,12 @@ function Wake.status(backend)
 end
 
 function Wake.install(plugin_path, backend, database, budget)
+    plugin_path = absolutePath(plugin_path)
+    backend = absolutePath(backend)
+    database = absolutePath(database)
+    if not plugin_path or not backend or not database then
+        return nil, "could not resolve absolute wake service paths"
+    end
     if not Wake.isSupported(backend) then return nil, "wake integration is not supported" end
     local template = plugin_path .. "/resources/koreader-rss-wake.conf"
     local supervisor_template = plugin_path .. "/resources/rss-wake-supervisor.sh"
@@ -73,9 +97,9 @@ function Wake.install(plugin_path, backend, database, budget)
     if supervisor_input then supervisor_input:close() end
     local ok = text ~= nil
     if ok and supervisor_text then
-        supervisor_text = supervisor_text:gsub("@BACKEND@", backend)
-            :gsub("@DATABASE@", database):gsub("@BUDGET@", tostring(budget or 240))
-        text = text:gsub("@SUPERVISOR@", supervisor)
+        supervisor_text = supervisor_text:gsub("@BACKEND@", replacement(backend))
+            :gsub("@DATABASE@", replacement(database)):gsub("@BUDGET@", tostring(budget or 600))
+        text = text:gsub("@SUPERVISOR@", replacement(supervisor))
         local supervisor_output = io.open(supervisor .. ".new", "w")
         ok = supervisor_output ~= nil
         if supervisor_output then supervisor_output:write(supervisor_text); supervisor_output:close() end

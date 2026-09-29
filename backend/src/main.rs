@@ -4,6 +4,7 @@ mod feed;
 mod fixture;
 mod http;
 mod http_probe;
+mod powerd;
 mod probe;
 mod refresh;
 mod store;
@@ -62,7 +63,7 @@ impl From<image::ImageError> for Error {
 }
 
 fn usage() -> &'static str {
-    "usage:\n  rss-backend --version\n  rss-backend doctor\n  rss-backend http-probe --url HTTPS_URL\n  rss-backend init-probe-db --db PATH\n  rss-backend materialize-fixture --out PATH\n  rss-backend --db PATH feed add URL\n  rss-backend --db PATH feed list\n  rss-backend --db PATH feed enable ID\n  rss-backend --db PATH feed disable ID\n  rss-backend --db PATH feed remove ID\n  rss-backend --db PATH init-fixture-db\n  rss-backend --db PATH device-probe --cache DIR\n  rss-backend --db PATH status\n  rss-backend --db PATH refresh [--feed ID] [--budget SEC] [--unbounded] [--reason manual|wake]\n  rss-backend --db PATH materialize ID --cache DIR"
+    "usage:\n  rss-backend --version\n  rss-backend doctor\n  rss-backend http-probe --url HTTPS_URL\n  rss-backend init-probe-db --db PATH\n  rss-backend materialize-fixture --out PATH\n  rss-backend --db PATH feed add URL\n  rss-backend --db PATH feed list\n  rss-backend --db PATH feed enable ID\n  rss-backend --db PATH feed disable ID\n  rss-backend --db PATH feed remove ID\n  rss-backend --db PATH init-fixture-db\n  rss-backend --db PATH device-probe --cache DIR\n  rss-backend --db PATH status\n  rss-backend --db PATH schedule\n  rss-backend --db PATH powerd-daemon [--budget SEC] [--settle SEC]\n  rss-backend --db PATH refresh [--feed ID] [--budget SEC] [--unbounded] [--reason manual|wake]\n  rss-backend --db PATH materialize ID --cache DIR"
 }
 
 fn value_argument(arguments: &[String], flag: &str) -> Result<String, Error> {
@@ -358,6 +359,11 @@ fn run(arguments: &[String]) -> Result<(), Error> {
                 let deadline = store.ensure_next_refresh_at(now)?;
                 println!("next_refresh_at={deadline}");
                 println!("seconds_until={}", deadline.saturating_sub(now).max(1));
+            }
+            Some("powerd-daemon") => {
+                let budget = integer_argument(&arguments[3..], "--budget", 600)?;
+                let settle = integer_argument(&arguments[3..], "--settle", 15)?;
+                powerd::run(&db, budget, settle)?;
             }
             Some("refresh") => {
                 let feed_id = integer_argument(&arguments[3..], "--feed", 0)?;

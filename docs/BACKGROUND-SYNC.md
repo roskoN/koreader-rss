@@ -2,8 +2,8 @@
 
 ## Overview
 
-Background synchronization is designed as a short-lived, bounded backend
-operation. The project does not run a permanent RSS daemon on the Kindle.
+Feed refresh work remains bounded, but the optional powerd integration runs the
+Rust event listener as a long-lived process. It does not poll while suspended.
 
 The persisted scheduler stores each feed's `next_due_at` and selects enabled,
 due feeds in deterministic schedule order. Each feed and its articles are
@@ -39,10 +39,11 @@ so an interrupted article retains a usable fallback.
 ## Current trigger state
 
 The optional suspend/resume integration is managed by the plugin and uses an
-Upstart supervisor for `com.lab126.powerd`'s `readyToSuspend` and
-`wakeupFromSuspend` events. It is disabled until the user explicitly enables
-it. The supervisor arms `rtcWakeup` through powerd from the persisted absolute
-deadline and does not poll while suspended. See
+Upstart supervisor to start one long-lived Rust listener for
+`com.lab126.powerd`'s `readyToSuspend` and `wakeupFromSuspend` events. It is
+disabled until the user explicitly enables it. The listener arms `rtcWakeup`
+through powerd from the persisted absolute deadline and does not poll while
+suspended. See
 [`WAKE-INTEGRATION.md`](WAKE-INTEGRATION.md) for the complete lifecycle.
 
 ## Investigated Kindle interfaces
@@ -86,16 +87,24 @@ powerd's `rtcWakeup` arbitration rather than raw RTC sysfs writes.
 
 ## Wake refresh lifecycle
 
-The installed supervisor invokes the backend directly:
+The installed supervisor starts the long-lived backend listener:
 
 ```text
-/mnt/us/koreader/plugins/rssreader.koplugin/refresh-job.sh
+/mnt/us/koreader/plugins/rssreader.koplugin/bin/rss-backend \
+  --db /mnt/us/koreader/data/rssreader/rss.sqlite3 powerd-daemon
 ```
 
-The schedule is no more frequent than the configured feed interval, respects
-the persisted due time, and releases temporary suspend deferral after the
-bounded operation. The one-shot wrapper remains available for manual/device
-diagnostics.
+The listener arms the persisted due time during `readyToSuspend`, waits for
+`wakeupFromSuspend`, settles for approximately 15 seconds, checks powerd state,
+and releases temporary suspend deferral after bounded refresh work. The
+one-shot wrapper remains available for manual/device diagnostics. Refresh
+history and outcomes are available from SQLite via the backend `status` command.
+
+The normal successful wake-check interval is four hours. At a scheduled wake,
+all enabled feeds without a pending failure backoff are checked even if their
+ordinary successful-refresh interval has not elapsed. Failed feeds respect
+their persisted retry deadline. The wake refresh retains its configured
+600-second work budget.
 
 ## Validation commands
 

@@ -75,13 +75,12 @@ After Wi-Fi is usable:
 
 ```sh
 /mnt/us/koreader/plugins/rssreader.koplugin/refresh-job.sh
-cat /mnt/us/koreader/data/rssreader/logs/refresh.log
 /mnt/us/koreader/plugins/rssreader.koplugin/bin/rss-backend \
   --db /mnt/us/koreader/data/rssreader/rss.sqlite3 status
 ```
 
-Confirm that the wrapper exits within its budget, records a `wake` refresh,
-and leaves no process or keep-awake state behind.
+Confirm that the wrapper exits within its budget, records a `wake` refresh in
+SQLite, and leaves no process or keep-awake state behind.
 
 ## 6. Clear the temporary alarm
 
