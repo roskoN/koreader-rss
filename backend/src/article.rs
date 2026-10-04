@@ -11,7 +11,7 @@ use image::{
     codecs::{jpeg::JpegEncoder, png::PngEncoder},
     imageops::FilterType,
     metadata::Orientation,
-    DynamicImage, GenericImageView, ImageDecoder, ImageEncoder, ImageReader,
+    DynamicImage, GenericImageView, ImageDecoder, ImageEncoder, ImageReader, Limits,
 };
 use url::Url;
 
@@ -25,6 +25,10 @@ pub const CONTENT_FORMAT: i64 = 1;
 pub const STORAGE_VERSION: i64 = 1;
 const CACHE_MAX_FILES: usize = 3;
 const CACHE_MAX_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_IMAGE_DECODE_PIXELS: u64 = 4_000_000;
+const MAX_IMAGE_DECODE_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_IMAGE_DIMENSION: u32 = 8192;
+const MAX_EMBEDDED_IMAGE_DATA_BYTES: usize = 4 * 1024 * 1024;
 
 pub fn extract_page_with_selectors(
     html: &str,
@@ -277,6 +281,7 @@ pub fn embed_images(
     let base_url = base_url.and_then(|base| Url::parse(base).ok());
     let mut cursor = 0;
     let mut processed = 0;
+    let mut embedded_bytes = 0usize;
     while processed < 12 {
         let Some(relative) = find_ascii_case_insensitive(&output[cursor..], b"<img") else {
             break;
@@ -287,7 +292,7 @@ pub fn embed_images(
         };
         let end = start + end_rel + 1;
         let tag = output[start..end].to_owned();
-        let Some(src_rel) = find_ascii_case_insensitive(&tag, b"src=") else {
+        let Some(src_rel) = find_img_src_attribute(&tag) else {
             cursor = end;
             continue;
         };
@@ -306,6 +311,11 @@ pub fn embed_images(
                 .unwrap_or(tag.len() - value_start);
             (value_start, value_start + close)
         };
+        let attr_end = if quote == b'"' || quote == b'\'' {
+            to + 1
+        } else {
+            to
+        };
         let raw_url = &tag[from..to];
         let resolved = base_url
             .as_ref()
@@ -313,17 +323,51 @@ pub fn embed_images(
             .map(|u| u.to_string())
             .unwrap_or_else(|| raw_url.to_owned());
         if resolved.starts_with("http://") || resolved.starts_with("https://") {
-            if let Ok(bytes) = client.fetch_image(&resolved) {
-                if let Ok(uri) = encode_image(&bytes) {
-                    let replacement = format!("{}{}{}", &tag[..from], uri, &tag[to..]);
-                    output.replace_range(start..end, &replacement);
-                }
-            }
+            let uri = client
+                .fetch_image(&resolved)
+                .and_then(|bytes| encode_image(&bytes))
+                .ok()
+                .filter(|uri| {
+                    embedded_bytes.saturating_add(uri.len()) <= MAX_EMBEDDED_IMAGE_DATA_BYTES
+                });
+            let replacement = if let Some(uri) = uri {
+                embedded_bytes += uri.len();
+                format!("{}{}{}", &tag[..from], uri, &tag[to..])
+            } else {
+                // Keep the alt text, but don't leave a remote dependency in an
+                // otherwise self-contained offline document.
+                strip_image_source(&tag, src_rel, attr_end)
+            };
+            let replacement_end = start + replacement.len();
+            output.replace_range(start..end, &replacement);
+            cursor = replacement_end;
+        } else {
+            cursor = end;
         }
-        cursor = end;
         processed += 1;
     }
     output
+}
+
+fn strip_image_source(tag: &str, source_start: usize, source_end: usize) -> String {
+    let mut stripped = String::with_capacity(tag.len());
+    stripped.push_str(&tag[..source_start]);
+    stripped.push_str(&tag[source_end..]);
+    stripped
+}
+
+fn find_img_src_attribute(tag: &str) -> Option<usize> {
+    let bytes = tag.as_bytes();
+    let mut search_from = 0;
+    while search_from < tag.len() {
+        let relative = find_ascii_case_insensitive(&tag[search_from..], b"src=")?;
+        let start = search_from + relative;
+        if start > 0 && bytes[start - 1].is_ascii_whitespace() {
+            return Some(start);
+        }
+        search_from = start + b"src=".len();
+    }
+    None
 }
 
 fn find_ascii_case_insensitive(haystack: &str, needle: &[u8]) -> Option<usize> {
@@ -336,6 +380,13 @@ fn find_ascii_case_insensitive(haystack: &str, needle: &[u8]) -> Option<usize> {
 fn encode_image(bytes: &[u8]) -> Result<String, Error> {
     let reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
     let mut decoder = reader.into_decoder()?;
+    let (width, height) = decoder.dimensions();
+    check_image_dimensions(width, height)?;
+    let mut limits = Limits::default();
+    limits.max_image_width = Some(MAX_IMAGE_DIMENSION);
+    limits.max_image_height = Some(MAX_IMAGE_DIMENSION);
+    limits.max_alloc = Some(MAX_IMAGE_DECODE_BYTES);
+    decoder.set_limits(limits)?;
     let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
     let mut image = DynamicImage::from_decoder(decoder)?;
     image.apply_orientation(orientation);
@@ -361,6 +412,15 @@ fn encode_image(bytes: &[u8]) -> Result<String, Error> {
             STANDARD.encode(encoded)
         ))
     }
+}
+
+fn check_image_dimensions(width: u32, height: u32) -> Result<(), Error> {
+    if u64::from(width).saturating_mul(u64::from(height)) > MAX_IMAGE_DECODE_PIXELS {
+        return Err(Error::message(
+            "image dimensions exceed the Kindle decode limit",
+        ));
+    }
+    Ok(())
 }
 
 fn limit_image(image: DynamicImage) -> DynamicImage {
@@ -460,6 +520,52 @@ fn filetime_touch(path: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejects_images_with_excessive_decode_area_before_allocating_pixels() {
+        let image =
+            DynamicImage::ImageRgb8(image::RgbImage::from_pixel(1, 1, image::Rgb([0, 0, 0])));
+        let mut jpeg = Vec::new();
+        JpegEncoder::new_with_quality(&mut jpeg, 80)
+            .encode_image(&image)
+            .expect("encode test JPEG");
+        let sof = jpeg
+            .windows(2)
+            .position(|marker| marker == [0xff, 0xc0])
+            .expect("baseline JPEG frame marker");
+        jpeg[sof + 5..sof + 7].copy_from_slice(&8192u16.to_be_bytes());
+        jpeg[sof + 7..sof + 9].copy_from_slice(&8192u16.to_be_bytes());
+
+        // The image has no pixel data for these dimensions. encode_image must
+        // reject based on its header instead of attempting the full decode.
+        assert!(encode_image(&jpeg)
+            .expect_err("oversized image must be rejected")
+            .to_string()
+            .contains("decode limit"));
+        assert!(check_image_dimensions(8192, 8192)
+            .expect_err("oversized image must be rejected")
+            .to_string()
+            .contains("decode limit"));
+        assert!(check_image_dimensions(1200, 2400).is_ok());
+    }
+
+    #[test]
+    fn stripping_an_unembeddable_image_keeps_its_alt_text() {
+        let tag = r#"<img src="https://example.org/large.jpg" alt="A useful chart">"#;
+        let source_start = tag.find("src=").expect("src attribute");
+        let source_end = tag.find(" alt=").expect("alt attribute");
+        let stripped = strip_image_source(tag, source_start, source_end);
+        assert!(!stripped.contains("src="));
+        assert!(stripped.contains("alt=\"A useful chart\""));
+    }
+
+    #[test]
+    fn image_source_match_does_not_match_data_src() {
+        let tag = r#"<img data-src="lazy.jpg" SRC="actual.jpg">"#;
+        let source = find_img_src_attribute(tag).expect("src attribute");
+        assert_eq!(&tag[source..source + 4], "SRC=");
+        assert!(find_img_src_attribute(r#"<img data-src="lazy.jpg">"#).is_none());
+    }
 
     #[test]
     fn wraps_and_compresses_embedded_content() {

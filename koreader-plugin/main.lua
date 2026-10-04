@@ -11,7 +11,6 @@ local UIManager = require("ui/uimanager")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local util = require("util")
 local _ = require("gettext")
-local Wake = require("wake")
 
 local RSSReader = WidgetContainer:extend{
     name = "rssreader",
@@ -24,6 +23,14 @@ end
 
 local function trim(text)
     return (text or ""):match("^%s*(.-)%s*$")
+end
+
+local function scheduleDeadline(output)
+    return tonumber((output or ""):match("next_refresh_at=(%-?%d+)"))
+end
+
+local function scheduleInterval(output)
+    return tonumber((output or ""):match("refresh_interval_s=(%d+)")) or 21600
 end
 
 local function withDatabase(path, callback)
@@ -63,6 +70,64 @@ function RSSReader:init()
     self.fixture = self.cache_dir .. "/integration-probe.html"
     self.ui.menu:registerToMainMenu(self)
     self:importOpmlFeeds()
+    -- Let plugin initialization finish before querying SQLite and registering
+    -- with KOReader's device-owned WakeupMgr.
+    UIManager:nextTick(function() self:scheduleWakeRefresh() end)
+end
+
+function RSSReader:removeWakeRefreshTask()
+    if self.wake_refresh_callback then
+        Device.wakeup_mgr:removeTasks(nil, self.wake_refresh_callback)
+        self.wake_refresh_callback = nil
+    end
+end
+
+function RSSReader:scheduleWakeRefresh(minimum_delay)
+    if not Device.wakeup_mgr then return end
+    self:removeWakeRefreshTask()
+    self:runBackend({ self.backend, "--db", self.database, "schedule" }, nil, function(output)
+        local deadline = scheduleDeadline(output)
+        if not deadline then return end
+        local delay = math.max(minimum_delay or 1, deadline - os.time())
+        local callback
+        callback = function()
+            if self.wake_refresh_callback == callback then
+                self.wake_refresh_callback = nil
+            end
+            -- WakeupMgr tasks are one-shot. Queue a fallback before starting
+            -- network work so an unavailable radio cannot lose the schedule.
+            self:scheduleWakeRefresh(scheduleInterval(output))
+            self:runWakeRefresh()
+        end
+        self.wake_refresh_callback = callback
+        Device.wakeup_mgr:addTask(delay, callback)
+    end)
+end
+
+function RSSReader:runWakeRefresh()
+    -- This callback is invoked only after WakeupMgr validates a scheduled
+    -- alarm. User-driven resumes do not enter this path.
+    local command = util.shell_escape({
+        self.backend, "--db", self.database, "refresh", "--reason", "wake", "--budget", "600",
+    }) .. " 2>&1; status=$?; printf '\\n__RSS_EXIT=%s\\n' \"$status\""
+    local function refresh()
+        Trapper:wrap(function()
+            local completed, output = Trapper:dismissablePopen(command, false)
+            if not completed then return end
+            local status = output and output:match("__RSS_EXIT=(%d+)%s*$")
+            -- Successful and failed refresh attempts both persist the next
+            -- deadline. Replace the fallback with that authoritative value.
+            self:scheduleWakeRefresh(status == "0" and 1 or 60)
+        end)
+    end
+
+    -- Wi-Fi may have been powered down during suspend. NetworkMgr's callback
+    -- is asynchronous and fires only after connectivity is reported.
+    if NetworkMgr:isConnected() then
+        refresh()
+    else
+        NetworkMgr:enableWifi(refresh)
+    end
 end
 
 function RSSReader:importOpmlFeeds()
@@ -122,73 +187,48 @@ end
 
 function RSSReader:showStatus()
     self:runBackend({ self.backend, "--db", self.database, "status" }, _("Loading refresh status…"), function(output)
-        output = output:gsub("started_at=(%-?%d+)", function(value)
-            return "started_at=" .. os.date("!%Y-%m-%d %H:%M:%S UTC", tonumber(value))
-        end)
-        output = output:gsub("finished_at=(%-?%d+)", function(value)
-            local timestamp = tonumber(value)
-            return "finished_at=" .. (timestamp == 0 and _("not finished") or os.date("!%Y-%m-%d %H:%M:%S UTC", timestamp))
-        end)
-        show(output)
+        local history = {}
+        for line in output:gmatch("([^\r\n]+)") do
+            local id, started, finished, checked, added, failed, budget, reason, outcome, error =
+                line:match("^history=(%d+)|(%-?%d+)|(%-?%d+)|(%d+)|(%d+)|(%d+)|(%d+)|(%d+)|([%w_]+)|([^|]*)$")
+            if id then
+                local reason_label = reason == "2" and _("Wake") or _("Manual")
+                local outcome_labels = {
+                    ["1"] = _("Success"), ["2"] = _("Partial"), ["3"] = _("Interrupted"),
+                    ["4"] = _("Failed"), running = _("Running"),
+                }
+                local time_label = os.date("!%Y-%m-%d %H:%M UTC", tonumber(started))
+                local finish = tonumber(finished)
+                local duration = finish > 0 and math.max(0, finish - tonumber(started)) or nil
+                local duration_label = duration and (" · " .. tostring(duration) .. "s") or ""
+                local budget_label = tonumber(budget) == 0 and _("unbounded") or (tostring(budget) .. "s")
+                local error_label = error ~= "" and ("\n" .. error) or ""
+                history[#history + 1] = {
+                    text = string.format("%s · %s · %s\n%s feeds · %s new · %s failed · %s%s%s",
+                        time_label, reason_label, outcome_labels[outcome] or outcome,
+                        checked, added, failed, budget_label, duration_label, error_label),
+                    multilines_forced = true,
+                }
+            end
+        end
+        if #history == 0 then
+            show(_("No refresh history available."))
+            return
+        end
+        local menu = Menu:new{
+            title = _("Refresh history (last 10)"),
+            item_table = history,
+            covers_fullscreen = true,
+            multilines_forced = true,
+            items_max_lines = 3,
+        }
+        UIManager:show(menu)
     end)
 end
 
 function RSSReader:refreshNow()
     self:runBackend({ self.backend, "--db", self.database, "refresh", "--reason", "manual", "--unbounded" },
-        _("Refreshing feeds…"), function() self:showStatus() end)
-end
-
-function RSSReader:showWakeStatus()
-    local status = Wake.status(self.backend)
-    local support = status.supported and _("supported") or _("unsupported")
-    local state = status.running and _("running") or (status.installed and _("stopped") or _("not installed"))
-    show(string.format(
-        _("Wake refresh: %s\nService: %s\nConfiguration version: %s"),
-        support, state, tostring(status.version or _("none"))
-    ))
-end
-
-function RSSReader:enableWake()
-    local status = Wake.status(self.backend)
-    if not status.supported then
-        show(_("Wake refresh is not supported on this device."))
-        return
-    end
-    if status.installed then
-        if status.running then
-            show(_("Wake refresh is already enabled."))
-        elseif Wake.start() then
-            show(_("Wake refresh enabled."))
-        else
-            show(_("Wake refresh is installed but could not be started."))
-        end
-        return
-    end
-    local ok, err = Wake.install(self.path, self.backend, self.database, 600)
-    show(ok and _("Wake refresh enabled.") or tostring(err))
-end
-
-function RSSReader:disableWake()
-    local status = Wake.status(self.backend)
-    if not status.installed then
-        show(_("Wake refresh is already disabled."))
-        return
-    end
-    local ok, err = Wake.uninstall()
-    show(ok and _("Wake refresh disabled.") or tostring(err))
-end
-
-function RSSReader:showWake()
-    local actions = Menu:new{
-        title = _("Wake refresh"),
-        item_table = {
-            { text = _("Check status"), callback = function() UIManager:close(actions); self:showWakeStatus() end },
-            { text = _("Enable"), callback = function() UIManager:close(actions); self:enableWake() end },
-            { text = _("Disable"), callback = function() UIManager:close(actions); self:disableWake() end },
-        },
-        covers_fullscreen = true,
-    }
-    UIManager:show(actions)
+        _("Refreshing feeds…"), function() self:scheduleWakeRefresh(); self:showStatus() end)
 end
 
 function RSSReader:showFeeds()
@@ -436,12 +476,8 @@ function RSSReader:addToMainMenu(menu_items)
                 callback = function() self:refreshNow() end,
             },
             {
-                text = _("Refresh status"),
+                text = _("Refresh status (last 10)"),
                 callback = function() self:showStatus() end,
-            },
-            {
-                text = _("Wake refresh"),
-                callback = function() self:showWake() end,
             },
             {
                 text = _("Feeds"),

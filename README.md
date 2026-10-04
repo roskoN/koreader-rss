@@ -34,9 +34,8 @@ Open **RSS Reader** from the KOReader main menu.
 - **Remove all feeds** — permanently delete feeds and their dependent articles
   after confirmation.
 - **Refresh now** — process all due feeds without an overall time limit.
-- **Refresh status** — display the latest refresh outcome and counters.
-- **Wake refresh** — open explicit **Check status**, **Enable**, and **Disable**
-  actions for refresh after a genuine Kindle suspend/resume cycle.
+- **Refresh status (last 10)** — browse recent sync times, trigger, outcome,
+  feed/article counters, errors, budget, and duration.
 - **Environment and paths** — show application paths and device information.
 - **Run backend doctor** — run critical SQLite/runtime checks.
 - **Test HTTPS and certificates** — verify network access.
@@ -62,44 +61,20 @@ retry. Imports are idempotent.
 
 Manual refresh is available from the **Refresh now** menu item. It processes
 all due feeds and entries until completion; individual network requests still
-use their normal connection/read timeouts. The backend also has a one-shot
-unattended wrapper:
-
-```text
-/mnt/us/koreader/plugins/rssreader.koplugin/refresh-job.sh
-```
-
-It waits for HTTPS readiness, runs a short `--reason wake` refresh, and exits.
-The optional powerd/Upstart integration starts a long-lived Rust listener that
-arms the RTC deadline at `readyToSuspend` and
-runs the same bounded backend command after a due `wakeupFromSuspend`. It is
-never installed silently. See
+use their normal connection/read timeouts. Scheduled refreshes are registered
+with KOReader's `Device.wakeup_mgr` while the plugin is loaded. KOReader owns
+Kindle RTC/powerd interaction, and the Rust backend performs the bounded refresh
+when KOReader validates a scheduled wake. See
 [docs/WAKE-INTEGRATION.md](docs/WAKE-INTEGRATION.md).
-
-### Wake refresh menu
-
-The **Wake refresh** menu provides three explicit actions:
-
-- **Check status** — report device support, service state, and configuration
-  version.
-- **Enable** — install the versioned Upstart listener and start it after safely
-  restoring the system root to read-only.
-- **Disable** — stop the listener and remove its configuration.
-
-The listener waits for `com.lab126.powerd`'s suspend and wake events. After a
-short settling period it checks `powerd.state` and the persisted deadline
-before running a short `rss-backend refresh --reason wake` command. KOReader
-does not need to be running when the Kindle wakes, and the process does not
-poll while suspended or use `outOfScreenSaver` as a trigger.
 
 ## Installation for users
 
 Download the ZIP archive from the repository's [GitHub Releases](https://github.com/roskoN/koreader-rss/releases)
-page. The current public release is `v0.0.2`. The package is intended for a
+page. The current public release is `v0.0.3`. The package is intended for a
 jailbroken **Kindle Paperwhite 4 (10th generation)** running KOReader.
 
 1. Install KOReader on the jailbroken Kindle and start it once.
-2. Download `rssreader-0.0.2.zip` (or a newer release) on your computer.
+2. Download `rssreader-0.0.3.zip` (or a newer release) on your computer.
 3. Extract the archive. It contains a directory named `rssreader.koplugin`.
 4. Connect the Kindle over USB and copy that complete directory to:
 

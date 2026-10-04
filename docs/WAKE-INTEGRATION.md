@@ -1,45 +1,46 @@
 # KOReader RSS Wake Integration
 
-The optional wake integration schedules an approximately four-hour RTC wake,
-refreshes due feeds, and lets powerd suspend normally again. It does not
-replace Kindle power management or require KOReader to be running.
+The plugin schedules refreshes through KOReader's `Device.wakeup_mgr`. KOReader
+owns Kindle RTC/powerd integration, including programming the alarm at
+`ReadyToSuspend` and validating scheduled wakes after resume. Rust owns the
+persisted deadline and performs feed refresh work.
 
 ```text
-Lua plugin  -> manages the optional service and reports status
-Upstart     -> starts and supervises the Rust listener
-Rust        -> listens for powerd events, arms RTC, and performs bounded refresh work
+Lua plugin  -> reads backend deadline, schedules/removes a WakeupMgr task
+KOReader    -> arms and validates Kindle wakeups through its power lifecycle
+Rust        -> persists deadlines and performs bounded refresh work
 SQLite      -> stores refresh history and article state
 ```
 
-On the verified PW4 firmware, `lipc-wait-event com.lab126.powerd
-wakeupFromSuspend` is emitted after genuine resume. `outOfScreenSaver` is not
-used because it can occur without suspend. These observations are specific to
-the tested Kindle and require acceptance testing on other firmware.
+## Lifecycle
 
-## Files and lifecycle
+The plugin is not document-only, so KOReader loads it in both file-manager and
+reader sessions; either running mode can register the same persisted schedule.
+At plugin initialization and after refresh completion, Lua runs the backend's
+`schedule` command, parses `next_refresh_at`, removes any previous task by its
+callback reference, and registers one replacement task with
+`Device.wakeup_mgr:addTask`. Past deadlines are clamped to a one-second delay.
+The backend's SQLite state retains feed URLs, refresh interval, and last
+successful refresh. The WakeupMgr callback queues a fallback one-shot task
+before attempting network work, so a failed connection cannot consume the only
+scheduled task. If the radio is offline, Lua asks NetworkMgr to enable Wi-Fi and
+starts the bounded refresh only from its asynchronous connected callback; there
+is no blocking Wi-Fi wait loop. Normal user resumes do not trigger refresh.
+After a completed backend run, Lua rereads persisted scheduling state and
+replaces the fallback task. Failed backend runs use a 60-second minimum retry.
 
-The plugin ships `wake.lua`, `resources/koreader-rss-wake.conf`, and the
-supervisor template. Enabling
-**Refresh after Kindle wakes** validates prerequisites, temporarily makes the
-system root writable, installs the reviewed Upstart configuration, restores
-read-only state, starts the service, and verifies its status. Installation is
-idempotent and includes a template version marker. Disabling the option stops
-the service and removes the configuration using the same read-only restoration
-guard. The plugin never installs the service merely because it is present.
-
-The Upstart job starts one long-lived Rust process. The process owns both event
-listeners and is frozen with userspace during suspend:
+The integration does not install or listen for powerd events itself:
 
 ```text
-readyToSuspend 1 -> calculate (next_refresh_at - now) -> lipc-set-prop rtcWakeup N
-wakeupFromSuspend -> wait 15s -> check powerd.state and deadline -> refresh if due
+Lua addTask -> KOReader mockrtc retains desired epoch
+ReadyToSuspend -> KOReader/powerd programs rtcWakeup
+scheduled resume -> KOReader validates WakeupMgr proximity -> callback -> Rust refresh
 ```
 
-The backend and database paths are safely substituted when the service is
-installed. `lipc-wait-event` is the only event wait; there is no suspended-state
-polling. After wake, the process checks `powerd.state` and the persisted
-absolute deadline before refreshing, then releases its temporary suspend
-deferral.
+Rust does not write RTC state, call LIPC, start an event listener, or request a
+forced suspend. After the backend exits, normal KOReader/powerd inactivity and
+autosuspend behavior applies; its exact behavior during background refresh is
+`NEEDS EXPERIMENT` on Kindle.
 
 ## Backend wake policy
 
@@ -72,28 +73,23 @@ Typical invocation:
 ```
 
 Refresh metadata records trigger, duration, feeds checked, new articles,
-outcome, and error/skip reason. SQLite remains authoritative; service failures
-are supervised by Upstart. No application log files are written; inspect
-refresh status in SQLite using the backend `status` command.
+outcome, and error/skip reason. SQLite remains authoritative. No application
+log files are written; inspect refresh status in SQLite using the backend
+`status` command.
 
 ## Diagnostics and safety
 
-The plugin's **Wake refresh** menu reports support, installation, running
-state, template version, and the latest backend refresh status. Equivalent
-device checks are:
+Inspect persisted scheduler and refresh state with:
 
 ```sh
-status koreader-rss-wake
 /mnt/us/koreader/plugins/rssreader.koplugin/bin/rss-backend \
   --db /mnt/us/koreader/data/rssreader/rss.sqlite3 status
 ```
 
-Unsupported devices leave the system unchanged. Installation errors attempt to
-restore the root filesystem to read-only before reporting failure. The
-integration does not use `outOfScreenSaver`, poll while suspended, request raw
-`/sys/class/rtc` alarms, retry continuously, or wait indefinitely for Wi-Fi.
-The temporary `deferSuspend` request is released on completion; its exact
-suspend behavior remains `NEEDS EXPERIMENT` on the target firmware.
+The integration does not use `outOfScreenSaver`, poll while suspended, request
+raw `/sys/class/rtc` alarms, manipulate `rtcWakeup`, or wait indefinitely for
+Wi-Fi. The previous optional `koreader-rss-wake` Upstart service is retired;
+remove any older installation before using this integration.
 
 ## Validation status
 

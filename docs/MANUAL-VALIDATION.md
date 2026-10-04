@@ -43,14 +43,13 @@ after any deploy; the menu is not visible until then.
 **Path:** Main menu → *RSS Reader* → sub-items:
 
 1. Latest articles
-2. Refresh now / Refresh status
-3. Wake refresh (Check status / Enable / Disable)
-4. Feeds / Add feed
-5. Environment and paths
-6. Run backend doctor
-7. Test HTTPS and certificates
-8. Initialize and query SQLite
-9. Open offline HTML fixture
+2. Refresh now / Refresh status (last 10)
+3. Feeds / Add feed
+4. Environment and paths
+5. Run backend doctor
+6. Test HTTPS and certificates
+7. Initialize and query SQLite
+8. Open offline HTML fixture
 
 Expected per item is recorded in §9 (feed UI) and the relevant sections below.
 
@@ -151,19 +150,21 @@ policy (§H): `max_width`, `max_height = 2×`, `max_pixels = 2×` (never upscale
 | Latest article list | → Latest articles | reads newest `articles` join, ≤100 rows, count in title | |
 | Open article | tap latest row | materialize + `showReader`; no read-state write | §4 |
 | Refresh | Main menu / `refresh` | completes all due work, structured status in SQLite | |
-| Status | → Status | shows run counters/outcome | |
+| Refresh status | → Refresh status (last 10) | lists up to ten newest syncs in reverse insertion order with trigger, outcome, counters, and duration | |
 | External link | hold article | opens URL in stock reader | |
 
-## 9. Wake / power behavior (Milestone 7 gate)
+## 9. KOReader scheduled wake / power behavior
 
-All `NEEDS EXPERIMENT` per PLAN §N and §U#9.
+The plugin uses KOReader `Device.wakeup_mgr`; KOReader owns Kindle RTC and
+powerd lifecycle integration. Do not invoke the retired `powerd-daemon`, write
+RTC state, or use the historical Upstart service.
 
 | Check | Method | Expected | Evidence |
 |---|---|---|---|
-| Wi-Fi readiness time | trigger refresh on wake | time to first fetch | |
-| Process delays suspend? | run bounded `refresh --budget 240 --reason wake`, then suspend | measured awake duration, battery impact | |
-| Correct wake hook | experiment only after §6/§8 done | bounded progress, exits within budget/shutdown guard | |
-| Resume after suspend/kill | re-run after suspend | resumes sequential feed processing from persisted refresh state | |
+| WakeupMgr deadline | allow a persisted deadline to become due, suspend | KOReader executes only the registered callback | |
+| User-initiated wake | wake before the task deadline | no scheduled refresh runs | |
+| Natural resuspend | let a callback launch the bounded refresh | device returns to suspend without forced power control | |
+| Wi-Fi readiness | trigger a scheduled wake | time to first fetch; failures remain bounded | |
 | Backoff timing | 15m/1h/4h/12h/24h + jitter | matches schedule after failures | |
 
 ## 10. Observation log template
@@ -204,9 +205,7 @@ All commands take `--db PATH` (data DB) and, where noted, `--cache DIR`.
 `materialize` must print exactly one absolute path on success; `refresh` emits no
 progress stdout until completion (structured status goes to SQLite).
 
-## 12. Uncertainty carried forward from STATUS.md
-
-## 13. Automated validation
+## 12. Automated validation
 
 Run `make validate` before a device session. It exercises a fixture database,
 50 short-timeout materialization interruption boundaries, temporary-file
@@ -220,12 +219,3 @@ or suspend/battery behavior; retain those observations in the log above.
   and wake/suspend behavior remain **NEEDS EXPERIMENT** (§1, §6, §10).
 - Wake hook, Wi-Fi readiness, suspend interaction, execution window, battery
   impact remain **NEEDS EXPERIMENT** (§10).
-
-## 14. Unattended refresh job
-
-The deployed plugin contains `refresh-job.sh` as a one-shot diagnostic entrypoint.
-The wake/powerd service is the long-lived Rust `powerd-daemon`. The wrapper waits
-up to one minute for HTTPS readiness, invokes the backend with
-`--reason wake --budget 60`, and exits without changing power-management state.
-It does not install a daemon or schedule itself. Refresh results are recorded
-in SQLite, not in log files.

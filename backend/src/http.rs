@@ -6,9 +6,11 @@ use ureq::ResponseExt;
 
 use crate::Error;
 
-pub const MAX_FEED_BYTES: u64 = 4 * 1024 * 1024;
-pub const MAX_PAGE_BYTES: u64 = 8 * 1024 * 1024;
-pub const MAX_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
+// Keep compressed input sizes conservative on the Kindle: XML/HTML parsers and
+// image decoders can expand small network bodies substantially in memory.
+pub const MAX_FEED_BYTES: u64 = 1024 * 1024;
+pub const MAX_PAGE_BYTES: u64 = 2 * 1024 * 1024;
+pub const MAX_IMAGE_BYTES: u64 = 2 * 1024 * 1024;
 
 fn retry_after_seconds(value: &str) -> Option<i64> {
     if let Ok(seconds) = value.trim().parse::<i64>() {

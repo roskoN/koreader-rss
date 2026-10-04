@@ -1,5 +1,9 @@
 # KOReader RSS Wake Integration Plan
 
+> Historical design for the retired Upstart/powerd implementation. Do not use
+> it for deployment; the current WakeupMgr-based integration is documented in
+> `docs/WAKE-INTEGRATION.md`.
+
 ## Goal
 
 Enable the KOReader RSS plugin to manage an optional background refresh

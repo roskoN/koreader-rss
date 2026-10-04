@@ -10,7 +10,8 @@ use crate::feed::ParsedEntry;
 use crate::Error;
 
 pub const APPLICATION_ID: i64 = 0x5253_5352; // "RSSR"
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
+const REFRESH_RUN_HISTORY_LIMIT: i64 = 10;
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -157,9 +158,10 @@ impl Store {
             transaction.execute_batch(
                 "CREATE TABLE app_state (
                     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-                    scheduler_cursor INTEGER NOT NULL DEFAULT 0,
-                    last_maintenance_at INTEGER,
-                    next_refresh_at INTEGER
+                     scheduler_cursor INTEGER NOT NULL DEFAULT 0,
+                     last_maintenance_at INTEGER,
+                     next_refresh_at INTEGER,
+                     last_successful_refresh_at INTEGER
                  );
                  INSERT INTO app_state(singleton) VALUES (1);
 
@@ -254,8 +256,7 @@ impl Store {
                  CREATE INDEX idx_feeds_due ON feeds(enabled, next_due_at, schedule_order);
                  CREATE INDEX idx_articles_newest ON articles(sort_at DESC, id DESC);
                   CREATE INDEX idx_articles_feed ON articles(feed_id, sort_at DESC, id DESC);
-                 CREATE INDEX idx_entry_failures_retry ON entry_failures(next_retry_at);
-                 CREATE INDEX idx_refresh_runs_started ON refresh_runs(started_at DESC);",
+                 CREATE INDEX idx_entry_failures_retry ON entry_failures(next_retry_at);",
             )?;
             transaction.pragma_update(None, "application_id", APPLICATION_ID)?;
             transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -345,6 +346,57 @@ impl Store {
                     [],
                 )?;
             }
+            transaction.pragma_update(None, "user_version", 3)?;
+            transaction.commit()?;
+            version = 3;
+        }
+        if version < 4 {
+            let transaction = self
+                .connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let has_last_success = transaction
+                .prepare(
+                    "SELECT 1 FROM pragma_table_info('app_state') WHERE name='last_successful_refresh_at'",
+                )?
+                .exists([])?;
+            if !has_last_success {
+                transaction.execute_batch(
+                    "ALTER TABLE app_state ADD COLUMN last_successful_refresh_at INTEGER;",
+                )?;
+            }
+            let has_refresh_runs = transaction
+                .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='refresh_runs'")?
+                .exists([])?;
+            if !has_refresh_runs {
+                transaction.execute_batch(
+                    "CREATE TABLE refresh_runs (
+                        id INTEGER PRIMARY KEY,
+                        reason INTEGER NOT NULL,
+                        started_at INTEGER NOT NULL,
+                        finished_at INTEGER,
+                        budget_s INTEGER,
+                        feeds_checked INTEGER NOT NULL DEFAULT 0,
+                        new_articles INTEGER NOT NULL DEFAULT 0,
+                        failed_feeds INTEGER NOT NULL DEFAULT 0,
+                        outcome INTEGER,
+                        last_error TEXT
+                     );
+                     ",
+                )?;
+            }
+            transaction.execute_batch("DROP INDEX IF EXISTS idx_refresh_runs_started;")?;
+            transaction.execute(
+                "UPDATE app_state SET last_successful_refresh_at=(
+                    SELECT MAX(finished_at) FROM refresh_runs WHERE outcome=?1
+                 ) WHERE singleton=1 AND last_successful_refresh_at IS NULL",
+                params![RUN_OUTCOME_SUCCESS],
+            )?;
+            transaction.execute(
+                "DELETE FROM refresh_runs WHERE id NOT IN (
+                    SELECT id FROM refresh_runs ORDER BY id DESC LIMIT ?1
+                 )",
+                params![REFRESH_RUN_HISTORY_LIMIT],
+            )?;
             transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             transaction.commit()?;
         }
@@ -538,6 +590,12 @@ impl Store {
             params![reason, now, budget_s],
         )?;
         let id = tx.last_insert_rowid();
+        tx.execute(
+            "DELETE FROM refresh_runs WHERE id NOT IN (
+                SELECT id FROM refresh_runs ORDER BY id DESC LIMIT ?1
+             )",
+            params![REFRESH_RUN_HISTORY_LIMIT],
+        )?;
         tx.commit()?;
         Ok(id)
     }
@@ -563,14 +621,26 @@ impl Store {
         outcome: i64,
         error: Option<&str>,
     ) -> Result<(), Error> {
-        self.connection.execute(
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute(
             "UPDATE refresh_runs SET finished_at=?2,outcome=?3,last_error=?4 WHERE id=?1",
             params![id, now, outcome, error],
         )?;
-        self.connection.execute(
-            "DELETE FROM refresh_runs WHERE id NOT IN (SELECT id FROM refresh_runs ORDER BY started_at DESC,id DESC LIMIT 20)",
-            [],
+        if outcome == RUN_OUTCOME_SUCCESS {
+            tx.execute(
+                "UPDATE app_state SET last_successful_refresh_at=?1 WHERE singleton=1",
+                params![now],
+            )?;
+        }
+        tx.execute(
+            "DELETE FROM refresh_runs WHERE id NOT IN (
+                SELECT id FROM refresh_runs ORDER BY id DESC LIMIT ?1
+             )",
+            params![REFRESH_RUN_HISTORY_LIMIT],
         )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -838,7 +908,7 @@ impl Store {
     pub fn latest_refresh_run(&self) -> Result<Option<RefreshRunSummary>, Error> {
         self.connection
             .query_row(
-                "SELECT id,started_at,COALESCE(finished_at,0),feeds_checked,new_articles,failed_feeds,budget_s,reason,outcome,last_error FROM refresh_runs ORDER BY started_at DESC,id DESC LIMIT 1",
+                "SELECT id,started_at,COALESCE(finished_at,0),feeds_checked,new_articles,failed_feeds,budget_s,reason,outcome,last_error FROM refresh_runs ORDER BY id DESC LIMIT 1",
                 [],
                 |row| Ok(RefreshRunSummary {
                     id: row.get(0)?, started_at: row.get(1)?, finished_at: row.get(2)?,
@@ -848,6 +918,31 @@ impl Store {
             )
             .optional()
             .map_err(Error::from)
+    }
+
+    pub fn refresh_run_history(&self) -> Result<Vec<RefreshRunSummary>, Error> {
+        let mut statement = self.connection.prepare(
+            "SELECT id,started_at,COALESCE(finished_at,0),feeds_checked,new_articles,
+                    failed_feeds,budget_s,reason,outcome,last_error
+             FROM refresh_runs ORDER BY id DESC LIMIT ?1",
+        )?;
+        let rows = statement
+            .query_map(params![REFRESH_RUN_HISTORY_LIMIT], |row| {
+                Ok(RefreshRunSummary {
+                    id: row.get(0)?,
+                    started_at: row.get(1)?,
+                    finished_at: row.get(2)?,
+                    feeds_checked: row.get(3)?,
+                    new_articles: row.get(4)?,
+                    failed_feeds: row.get(5)?,
+                    budget_s: row.get(6)?,
+                    reason: row.get(7)?,
+                    outcome: row.get(8)?,
+                    last_error: row.get(9)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
     }
 
     pub fn refresh_interval_s(&self) -> Result<i64, Error> {
@@ -896,10 +991,20 @@ impl Store {
         Ok(deadline)
     }
 
+    pub fn schedule_after_manual(&mut self, now: i64) -> Result<i64, Error> {
+        let interval = self.refresh_interval_s()?.max(60);
+        let deadline = now.saturating_add(interval);
+        self.connection.execute(
+            "UPDATE app_state SET next_refresh_at=?1 WHERE singleton=1",
+            params![deadline],
+        )?;
+        Ok(deadline)
+    }
+
     pub fn last_successful_refresh_at(&self) -> Result<Option<i64>, Error> {
         Ok(self.connection.query_row(
-            "SELECT MAX(finished_at) FROM refresh_runs WHERE outcome=?1",
-            params![RUN_OUTCOME_SUCCESS],
+            "SELECT last_successful_refresh_at FROM app_state WHERE singleton=1",
+            [],
             |row| row.get(0),
         )?)
     }
@@ -1016,6 +1121,102 @@ mod tests {
     }
 
     #[test]
+    fn refresh_history_retains_ten_runs_and_preserves_last_success() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let path = directory.path().join("rss.sqlite3");
+        let mut store = Store::open(&path).expect("open store");
+
+        for sequence in 1..=12 {
+            // Simulate a device clock moving backwards: insertion order still
+            // defines which runs are retained as the latest syncs.
+            let started_at = 100 - sequence;
+            let id = store
+                .begin_refresh_run(RUN_REASON_MANUAL, 60, started_at)
+                .expect("start run");
+            let outcome = if sequence == 1 {
+                RUN_OUTCOME_SUCCESS
+            } else {
+                RUN_OUTCOME_PARTIAL
+            };
+            store
+                .finish_refresh_run(id, started_at + 1, outcome, None)
+                .expect("finish run");
+        }
+
+        let history = store.refresh_run_history().expect("history");
+        assert_eq!(history.len(), REFRESH_RUN_HISTORY_LIMIT as usize);
+        assert_eq!(history[0].started_at, 88);
+        assert_eq!(history[9].started_at, 97);
+        assert_eq!(
+            store.last_successful_refresh_at().expect("last success"),
+            Some(100)
+        );
+        let persisted_count: i64 = store
+            .connection
+            .query_row("SELECT COUNT(*) FROM refresh_runs", [], |row| row.get(0))
+            .expect("count retained runs");
+        assert_eq!(persisted_count, REFRESH_RUN_HISTORY_LIMIT);
+    }
+
+    #[test]
+    fn schema_three_migration_trims_history_and_backfills_last_success() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let path = directory.path().join("rss.sqlite3");
+        let connection = Connection::open(&path).expect("create schema three database");
+        connection
+            .execute_batch(
+                "CREATE TABLE app_state (
+                    singleton INTEGER PRIMARY KEY CHECK (singleton=1),
+                    scheduler_cursor INTEGER NOT NULL DEFAULT 0,
+                    last_maintenance_at INTEGER,
+                    next_refresh_at INTEGER
+                 );
+                 INSERT INTO app_state(singleton) VALUES (1);
+                 CREATE TABLE refresh_runs (
+                    id INTEGER PRIMARY KEY,
+                    reason INTEGER NOT NULL,
+                    started_at INTEGER NOT NULL,
+                    finished_at INTEGER,
+                    budget_s INTEGER,
+                    feeds_checked INTEGER NOT NULL DEFAULT 0,
+                    new_articles INTEGER NOT NULL DEFAULT 0,
+                    failed_feeds INTEGER NOT NULL DEFAULT 0,
+                    outcome INTEGER,
+                    last_error TEXT
+                 );
+                 PRAGMA user_version=3;",
+            )
+            .expect("create schema three tables");
+        for started_at in 1..=12 {
+            connection
+                .execute(
+                    "INSERT INTO refresh_runs(reason,started_at,finished_at,budget_s,outcome)
+                     VALUES (?1,?2,?3,60,?4)",
+                    params![
+                        RUN_REASON_MANUAL,
+                        started_at,
+                        started_at + 1,
+                        if started_at == 1 {
+                            RUN_OUTCOME_SUCCESS
+                        } else {
+                            RUN_OUTCOME_PARTIAL
+                        }
+                    ],
+                )
+                .expect("insert historical run");
+        }
+        drop(connection);
+
+        let store = Store::open(&path).expect("migrate schema three database");
+        assert_eq!(store.schema_version().expect("schema version"), 4);
+        assert_eq!(store.refresh_run_history().expect("history").len(), 10);
+        assert_eq!(
+            store.last_successful_refresh_at().expect("last success"),
+            Some(2)
+        );
+    }
+
+    #[test]
     fn persistent_wake_deadline_is_absolute_and_due_checks_are_stable() {
         let directory = tempfile::tempdir().expect("temp directory");
         let path = directory.path().join("rss.sqlite3");
@@ -1035,6 +1236,13 @@ mod tests {
             15_401
         );
         assert!(!store.refresh_due(1_002).expect("not due after refresh"));
+        assert_eq!(
+            store
+                .schedule_after_manual(16_000)
+                .expect("manual reschedule"),
+            30_400
+        );
+        assert!(!store.refresh_due(16_001).expect("manual sync rescheduled"));
     }
 
     #[test]

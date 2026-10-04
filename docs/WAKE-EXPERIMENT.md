@@ -1,5 +1,9 @@
 # Kindle RTC Wake Experiment
 
+> Historical experiment plan for the retired standalone powerd listener. Do not
+> run its commands on the device; current behavior is documented in
+> `WAKE-INTEGRATION.md` and uses KOReader `WakeupMgr`.
+
 This experiment determines whether the Kindle can wake from suspend using its
 standard RTC alarm path and then run the deployed background refresh wrapper.
 It is intentionally temporary and must not install a recurring schedule.

@@ -2,6 +2,54 @@
 
 ## Implementation
 
+The plugin now schedules refresh deadlines through KOReader's `WakeupMgr`
+instead of using the standalone Rust `powerd-daemon` path. Lua reads the
+persisted Rust schedule, replaces its task by callback identity, dispatches a
+bounded wake refresh only from that callback, then reads and schedules the next
+deadline. The standalone listener, Upstart integration, service installer,
+supervisor, and one-shot wake wrapper have been removed from source and from the
+verified Kindle. The ARM backend binary was rebuilt without `powerd-daemon`.
+
+The KOReader WakeupMgr callback now queues a fallback one-shot task before
+starting network work. If Wi-Fi is disconnected, NetworkMgr enables it
+asynchronously and the refresh starts only from its connected callback; no
+blocking wait loop is used. The `schedule` command also exposes the persisted
+refresh interval and last successful refresh alongside the deadline. The plugin
+remains non-document-only and is loaded in both file-manager and reader modes.
+LuaJIT syntax compilation and all 44 workspace tests passed after these
+changes. Real Kindle wake/Wi-Fi behavior remains `NEEDS EXPERIMENT`.
+
+On 2026-10-04 version 0.0.3 of the plugin and ARM backend was deployed to
+`/mnt/us/koreader/plugins/rssreader.koplugin/`; its backend and Lua hashes were
+verified at deployment. The existing database reported 12 feeds and a persisted
+14,400-second refresh interval. Real WakeupMgr and Wi-Fi behavior remains
+unverified.
+
+Refresh status now presents the most recent ten sync runs in insertion order,
+including timestamp, trigger, outcome, feed/article counters, errors, budget,
+and duration. Schema v4 trims older run rows on migration and as new runs start
+or finish. Last-success time is persisted outside the bounded history so pruning
+does not erase it. Migration, retention, and last-success tests passed; LuaJIT
+syntax, formatting, Clippy, and all 47 workspace tests passed. Version 0.0.4
+was deployed on 2026-10-04 (backend SHA-256
+`43f1c16f16c2fd8b142b9157e1375c5aec41cab189ab5f62372e8df8032ec4c0`, plugin
+`c30f96db73ffe09fda5097bd844b20ebf85db7482f2e9f994a3f9deaa6ae9e77`). Device
+verification reported backend version 0.0.4, successful schema v4 migration,
+ten retained history entries, and all 12 feed rows intact. The persisted
+14,400-second interval and last-success timestamp remain available. KOReader has
+not been restarted with v0.0.4, so visual history rendering and scheduled
+WakeupMgr execution remain unverified.
+
+Validation for this change: LuaJIT bytecode compilation, `cargo fmt --all
+--check`, Clippy, all 42 workspace tests, and ARM/QEMU smoke checks passed. The
+rebuilt ARM binary was deployed; its hash matches the local artifact, and its
+strings contain none of `powerd-daemon`, `lipc-wait-event`, `lipc-set-prop`,
+`rtcWakeup`, or `deferSuspend`. A test package contains no retired wake module,
+templates, or wrapper. The KOReader `WakeupMgr` implementation documents
+callback-based `removeTasks` and invokes task callbacks only after the device
+resume path validates the alarm. No local third-party plugins using this API
+were present for pattern comparison.
+
 The Rust backend, SQLite store, KOReader plugin, deployment scripts, and
 validation tooling are implemented through the core offline-reader and
 bounded-refresh scope.
@@ -21,7 +69,8 @@ Completed capabilities include:
   reporting, overlap locking, `Retry-After`, feed error reporting, and
   confirmed purge actions.
 - Manual **Refresh now** runs unbounded until all due work completes; wake and
-  unattended refreshes remain explicitly time-bounded.
+  unattended refreshes remain explicitly time-bounded. Response/image size and
+  decoded-image limits keep an individual input bounded on Kindle.
 - Article page and embedded-image downloads use a single bounded pipeline per
   feed; SQLite writes remain serialized and deterministic.
 - KOReader RSS Reader menu with latest/per-feed views, paging, two-line entries
@@ -29,14 +78,12 @@ Completed capabilities include:
   refresh/status actions, external-link actions, and OPML startup import.
 - SQLite schema migration removing persisted read/unread columns and increasing
   the database target from 256 MiB to 512 MiB.
-- Optional scheduled wake integration with explicit Wake refresh UI, versioned
-  Upstart supervisor, and a long-lived Rust `powerd-daemon` that listens to
-  `readyToSuspend`/`wakeupFromSuspend`, arms `rtcWakeup` from the persistent
-  absolute `next_refresh_at`, waits for wake settling, checks `powerd.state`,
-  and performs scheduled refresh/defer-suspend handling. Each scheduled wake
-  checks enabled feeds except those still in failure backoff.
-- One-shot unattended refresh wrapper, host/QEMU/ARM validation, SSH device
-  diagnostics, crash-boundary cache checks, and benchmarks.
+- Scheduled background refresh through KOReader `Device.wakeup_mgr`, using the
+  Rust backend's persisted absolute deadline. Only a WakeupMgr-validated alarm
+  callback starts `refresh --reason wake`; Rust still applies bounded work,
+  enabled-feed selection, and failure backoff.
+- Host/QEMU/ARM validation, SSH device diagnostics, crash-boundary cache checks,
+  and benchmarks.
 - OPML smoke flow imports `assets/test-opml.opml`, verifies all 12 feeds, and
   retrieves articles from two stable feeds in that subscription set.
 - Refresh article preparation releases the feed response before page downloads
@@ -81,27 +128,20 @@ Automated validation is passing:
   tests, Clippy, and formatting.
 - Kindle database migration verified at schema version 3 with no `is_read` or
   `read_at` columns and `max_db_bytes=536870912`; 43 existing articles were
-  preserved.
-- Persistent wake deadline migration and due/backoff tests pass; Rust
-  formatting, Clippy, workspace tests, Lua syntax, shell syntax, and package
-  checks pass after the long-lived Rust powerd listener change.
+  preserved. Host migration tests now cover schema v4 history pruning.
+- Persisted refresh deadline and due/backoff tests pass; the legacy powerd
+  listener implementation has been removed.
 - Dead-owner refresh-lock recovery tests and the updated KOReader error path
   pass focused validation.
 
-The current ARM backend and KOReader plugin have been deployed to the verified
-Kindle at `/mnt/us/koreader/plugins/rssreader.koplugin/`, including `wake.lua`
-and the versioned Upstart template. Post-deployment backend and package-path
-checks passed.
-
-The scheduled-wake build was redeployed to the same Kindle on 2026-09-20.
-ARM/QEMU validation passed; device verification reported backend `0.0.2`,
-schema version 3 scheduler state, and the new supervisor/config resources.
-The optional Upstart job remains uninstalled (`status: Unknown job`).
-
-The dead-owner lock recovery and KOReader exit-137 diagnostics were deployed
-to the same Kindle on 2026-09-20. ARM release build, backend version check,
-file deployment, and device diagnostics passed. KOReader restart and manual
-refresh retry remain required for UI-level verification.
+The KOReader plugin entrypoint and ARM backend are deployed to the verified
+Kindle as of 2026-10-02. Their SHA-256 hashes match local artifacts (backend
+`cb48d178c35b7f438a9bf526b53055b54ba055cdbc602340e2bbef3f11fd2e99`, plugin
+`bed1fb452dcf18e932ff016d6f64302c3485ab00b1f971b8609eff6be1b58440`). The
+backend reports version `0.0.3`; the root filesystem is read-only and
+`powerd.state` was `active` during verification. Host formatting, Clippy, 44
+workspace tests, ARM/QEMU smoke tests, package creation, Lua syntax, and shell
+syntax passed for the deployed state.
 
 Verified device facts include Kindle Paperwhite 4 hardware, firmware/kernel
 `4.1.15-lab126`, KOReader `v2026.07.1`, ARM backend execution, SQLite probes,
@@ -116,52 +156,41 @@ from host or QEMU results:
 - KOReader Lua SQLite behavior and filesystem locking/journal recovery.
 - Base64 JPEG/PNG rendering, reader viewport, pagination, and sidecars/cache.
 - Full feed/article UI interaction after restart.
-- Wi-Fi readiness after wake, suspend/resume behavior, RTC scheduling,
-  `deferSuspend` semantics, total awake duration, and battery impact.
+- Wi-Fi readiness after wake, suspend/resume behavior, RTC scheduling, total
+  awake duration, and battery impact.
+- Real KOReader/Kindle `WakeupMgr` task execution and whether autosuspend
+  naturally follows the bounded refresh.
+- Re-run the interrupted manual refresh after the memory-limit fix and confirm
+  peak RSS remains below the Kindle's available memory under the real feed set.
 - Reproduce the original Kindle allocation failure with the single-entry
   refresh pipeline and confirm peak RSS under the full subscription set.
 
-The one-shot wrapper is deployed as:
+The retired listener had been active as PID 14974 with a 600-second budget.
+Cleanup stopped it, removed `/etc/upstart/koreader-rss-wake.conf`, the data-dir
+supervisor, old plugin installer/templates, the one-shot wrapper, the diagnostic
+`probe.sqlite3`, and old `powerd.log`/`refresh.log` files. Verification reports
+`Unknown job`, no listener process, and no listed experiment artifacts. The
+production `rss.sqlite3` was preserved. `rtcWakeup` is write-only/unreadable via
+the inspected LIPC property; no direct RTC or LIPC alarm manipulation was done.
+Any device-level wake behavior remains `NEEDS EXPERIMENT`.
 
-```text
-/mnt/us/koreader/plugins/rssreader.koplugin/refresh-job.sh
-```
-
-On 2026-09-28, the version-3 ARM package was deployed and the long-lived
-`powerd-daemon` was started successfully on the verified Kindle. A two-minute
-test deadline was armed in a backup-restored database. Simulating
-`com.lab126.powerd powerButton 1` reached `screenSaver` but did not establish a
-genuine suspend/RTC wake cycle; the service and temporary database changes were
-removed afterward. Physical suspend/resume testing remains required.
-
-The subsequent service failure was traced to KOReader passing relative plugin,
-backend, and data paths into the Upstart template. Wake installation now
-resolves those paths against KOReader's current working directory and the
-service template is version 4. The corrected configuration and supervisor were
-deployed on 2026-09-28 with absolute `/mnt/us/koreader/...` paths; Upstart
-reports `start/running` and `ps` shows the backend process. RTC/suspend
-acceptance remains outstanding.
-
-The diagnostic file-logging implementation and wrapper logging were removed on
-2026-09-29. Refresh outcomes remain in SQLite. Existing log files on the Kindle
-were left untouched by deployment and are no longer updated by the backend or
-one-shot wrapper. The cleaned version-0.0.3 package was deployed and the wake
-runner restarted as PID 25736; `BUDGET=600` remains active. The packaged
-one-shot wrapper was checked and contains no logging behavior.
-
-The optional Upstart supervisor is not enabled automatically. It starts the
-long-lived Rust listener, which listens to powerd `readyToSuspend` and
-`wakeupFromSuspend`, arms `rtcWakeup`, and performs due refreshes after wake.
-Production acceptance still requires repeated device cycles after explicitly
-enabling Wake refresh; RTC, state classification, and temporary suspend
-deferral remain device experiments.
+The latest device report also captured an OOM kill during manual refresh:
+`rss-backend` PID 19037 was killed at 280,540 KiB anonymous RSS with swap full.
+The persisted run was unfinished (`reason=1`, `budget_s=0`, `feeds_checked=0`);
+the KOReader process was not the OOM victim. The wake callback was not involved.
+Feed/page/image download limits are now 1/2/2 MiB; source images are rejected
+before decode above 4 MP, decoder allocation is capped at 32 MiB, per-article
+embedded image data is capped at 4 MiB, and rejected images have only their
+`src` removed. Host tests, Clippy, and ARM/QEMU smoke checks passed, and the
+updated backend was deployed. The production refresh was not rerun during this
+debug session; hardware peak-RSS acceptance remains outstanding.
 
 ## Next actions
 
-1. Restart KOReader to load the deployed article-list middle-dot formatting.
-2. Perform repeated suspend/resume RTC wake acceptance with backend 0.0.3 and
-   the 600-second wake budget, as described in `docs/WAKE-INTEGRATION.md` and
-   `docs/BACKGROUND-SYNC.md`.
+1. Restart KOReader to load v0.0.4 and verify the **Refresh status (last 10)**
+   screen in file-manager and reader mode.
+2. Perform genuine suspend/resume acceptance and verify the next `reason=2`
+   history entry, Wi-Fi reconnection, and natural autosuspend.
 3. Implement selector settings, larger extraction benchmarks, and
    refresh-transaction kill tests if needed after device observations.
 
@@ -181,7 +210,7 @@ governance and publishing files include:
   force-push/direct-push access, and both CI jobs as required checks.
 - `README.md` documents user installation and the verified Kindle evidence.
 
-The next release tag should be `v0.0.3`; it must be created after these
+The next release tag should be `v0.0.4`; it must be created after these
 changes are merged to `main` so the release workflow can publish the archive.
 
 The two-worker memory-bounded backend `0.0.2` was deployed to the verified
@@ -190,21 +219,7 @@ ARMv7/QEMU smoke tests and Kindle device diagnostics passed, including
 materialization and concurrent read probes. UI rendering and suspend/resume
 acceptance remain manual.
 
-On 2026-09-29, backend version `0.0.3` and wake-service template version 5 were
-deployed to the verified Kindle. The wake daemon was restarted with
-`budget_s=600` (10 minutes); Upstart reports it running as PID 15076. This
-changes the maximum configured unattended-refresh work window, not a strict
-wall-clock ceiling for processing one feed.
-
 The article list now prefixes source/date metadata with a middle dot and
 separates source from date with another middle dot. The updated Lua plugin was
 deployed on 2026-09-29; local and Kindle `main.lua` SHA-256 hashes match.
 KOReader must reload/restart to display the updated rows.
-
-On 2026-09-29, scheduled wake refresh policy was changed so every due RTC check
-selects all enabled feeds that are not still in failure backoff, bypassing the
-normal successful-feed interval. The global four-hour wake deadline, per-feed
-failure retry deadlines, and 600-second budget remain. Workspace tests and
-Clippy passed (44 tests), ARM/QEMU smoke validation passed, and backend 0.0.3
-was redeployed; Upstart restarted the runner as PID 25670 with budget 600.
-Real unattended wake behavior still needs device observation.

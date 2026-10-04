@@ -4,7 +4,6 @@ mod feed;
 mod fixture;
 mod http;
 mod http_probe;
-mod powerd;
 mod probe;
 mod refresh;
 mod store;
@@ -63,7 +62,7 @@ impl From<image::ImageError> for Error {
 }
 
 fn usage() -> &'static str {
-    "usage:\n  rss-backend --version\n  rss-backend doctor\n  rss-backend http-probe --url HTTPS_URL\n  rss-backend init-probe-db --db PATH\n  rss-backend materialize-fixture --out PATH\n  rss-backend --db PATH feed add URL\n  rss-backend --db PATH feed list\n  rss-backend --db PATH feed enable ID\n  rss-backend --db PATH feed disable ID\n  rss-backend --db PATH feed remove ID\n  rss-backend --db PATH init-fixture-db\n  rss-backend --db PATH device-probe --cache DIR\n  rss-backend --db PATH status\n  rss-backend --db PATH schedule\n  rss-backend --db PATH powerd-daemon [--budget SEC] [--settle SEC]\n  rss-backend --db PATH refresh [--feed ID] [--budget SEC] [--unbounded] [--reason manual|wake]\n  rss-backend --db PATH materialize ID --cache DIR"
+    "usage:\n  rss-backend --version\n  rss-backend doctor\n  rss-backend http-probe --url HTTPS_URL\n  rss-backend init-probe-db --db PATH\n  rss-backend materialize-fixture --out PATH\n  rss-backend --db PATH feed add URL\n  rss-backend --db PATH feed list\n  rss-backend --db PATH feed enable ID\n  rss-backend --db PATH feed disable ID\n  rss-backend --db PATH feed remove ID\n  rss-backend --db PATH init-fixture-db\n  rss-backend --db PATH device-probe --cache DIR\n  rss-backend --db PATH status\n  rss-backend --db PATH schedule\n  rss-backend --db PATH refresh [--feed ID] [--budget SEC] [--unbounded] [--reason manual|wake]\n  rss-backend --db PATH materialize ID --cache DIR"
 }
 
 fn value_argument(arguments: &[String], flag: &str) -> Result<String, Error> {
@@ -353,17 +352,48 @@ fn run(arguments: &[String]) -> Result<(), Error> {
                 } else {
                     println!("run_id=none");
                 }
+                for run in store.refresh_run_history()? {
+                    let outcome = run
+                        .outcome
+                        .map_or_else(|| "running".to_owned(), |value| value.to_string());
+                    let error = run
+                        .last_error
+                        .as_deref()
+                        .unwrap_or_default()
+                        .chars()
+                        .map(|character| {
+                            if character == '|' || character.is_control() {
+                                ' '
+                            } else {
+                                character
+                            }
+                        })
+                        .take(160)
+                        .collect::<String>();
+                    println!(
+                        "history={}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+                        run.id,
+                        run.started_at,
+                        run.finished_at,
+                        run.feeds_checked,
+                        run.new_articles,
+                        run.failed_feeds,
+                        run.budget_s,
+                        run.reason,
+                        outcome,
+                        error,
+                    );
+                }
             }
             Some("schedule") if arguments.len() == 3 => {
                 let now = unix_now();
                 let deadline = store.ensure_next_refresh_at(now)?;
                 println!("next_refresh_at={deadline}");
                 println!("seconds_until={}", deadline.saturating_sub(now).max(1));
-            }
-            Some("powerd-daemon") => {
-                let budget = integer_argument(&arguments[3..], "--budget", 600)?;
-                let settle = integer_argument(&arguments[3..], "--settle", 15)?;
-                powerd::run(&db, budget, settle)?;
+                println!("refresh_interval_s={}", store.refresh_interval_s()?.max(60));
+                if let Some(last_success) = store.last_successful_refresh_at()? {
+                    println!("last_successful_refresh_at={last_success}");
+                }
             }
             Some("refresh") => {
                 let feed_id = integer_argument(&arguments[3..], "--feed", 0)?;
@@ -412,6 +442,11 @@ fn run(arguments: &[String]) -> Result<(), Error> {
                             if reason == store::RUN_REASON_WAKE {
                                 let next = store.schedule_after_wake(unix_now(), failures == 0)?;
                                 println!("next_refresh_at={next}");
+                            } else {
+                                // The completed manual pass already checked
+                                // healthy due feeds; failures have per-feed
+                                // retry deadlines of their own.
+                                store.schedule_after_manual(unix_now())?;
                             }
                         }
                         Err(error) => {

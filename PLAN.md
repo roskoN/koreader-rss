@@ -37,15 +37,16 @@ management remain independent.
 - Compressed SQLite article BLOBs and atomic disposable materialization.
 - Deterministic sequential scheduling, refresh-run status, overlap locking, retention,
   cache limits, and incremental vacuum maintenance.
+- Bounded sync history retaining the latest ten runs, with the last successful
+  refresh timestamp preserved independently of history pruning.
 - Feed add/check/list/enable/disable/remove, title persistence, error
   reporting, confirmed purge controls, and OPML import from the plugin feeds
   directory.
-- KOReader latest/all-per-feed article views, paging, refresh/status actions,
-  two-line article rows, and external-link actions without persisted
-  read/unread state.
-- Optional suspend/resume wake refresh integration with explicit KOReader
-  enable/disable controls, Upstart supervision, and bounded `reason=wake`
-  backend semantics.
+- KOReader latest/all-per-feed article views, paging, refresh and last-ten
+  status-history actions, two-line article rows, and external-link actions
+  without persisted read/unread state.
+- Scheduled wake refresh through KOReader `WakeupMgr`; Lua schedules from the
+  persisted backend deadline and Rust performs bounded `reason=wake` work.
 - Host, QEMU, ARM, SSH diagnostics, interruption/cache automation, and
   materialization benchmarks.
 
